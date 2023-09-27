@@ -36,15 +36,21 @@ end
 
 
 abstract type WorldModel end
+abstract type WorldState{T<:WorldModel} end
 
-abstract type PlanningModule end
+include("world_models/world_models.jl")
 
-struct VGDLWorldModel <: WorldModel
-    game::VGDL.Game
-end
+abstract type PerceptionModule{T<:WorldModel} end
+abstract type PlanningModule{T<:WorldModel} end
+
 
 # Define agents that infer the world
-abstract type GenAgent <: VGDL.Agent end
+struct GenAgent{W<:WorldModel} <: VGDL.Agent
+    perception::PerceptionModule{W}
+    planning::PlanningModule{W}
+    world::WorldState{W}
+end
+
 
 """
     observation_model(a::GenAgent)

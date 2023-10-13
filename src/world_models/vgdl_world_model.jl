@@ -26,9 +26,9 @@ end
     # deterministic forward step
     # REVIEW: consider incremental computation?
     new_gstate = VGDL.update_step(prev.gstate, queues)
-    new_state = VGDLWorldState(new_gstate) # package
     # predict observation
-    pred_mu, pred_var = render_prediction(wm.graphics, new_state)
+    pred_mu, pred_var = render_prediction(wm.graphics, new_gstate)
     obs = @trace(broadcasted_normal(pred_mu, pred_var), :observe)
+    new_state = VGDLWorldState(new_gstate) # package
     return new_state
 end

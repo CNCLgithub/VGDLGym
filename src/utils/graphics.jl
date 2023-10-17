@@ -1,4 +1,3 @@
-abstract type GraphicsModule end
 
 """
     render_prediction(g::GraphicsModule, ws::WorldState)
@@ -36,8 +35,7 @@ default_colormap(::VGDL.ButterflyGame) =
         GenAgent => F3V(0., 0., 0.9),
     )
 
-function render_prediction(g::PixelGraphics, gs::VGDL.GameState)
-
+function render(g::PixelGraphics, gs::VGDL.GameState)
     nx,ny = gs.bounds
     m = Array{Float64}(undef, (3, nx, ny))
 
@@ -56,9 +54,13 @@ function render_prediction(g::PixelGraphics, gs::VGDL.GameState)
         T = typeof(gs.items[i])
         mv[:] = g.color_map[T]
     end
+    return m
+end
 
+function render_prediction(g::PixelGraphics, gs::VGDL.GameState)
+    m = render(g, gs)
+    nx,ny = gs.bounds
     sds = Fill(g.noise, (3, nx, ny))
-
     (m, sds)
 end
 

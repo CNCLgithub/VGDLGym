@@ -1,19 +1,23 @@
+export IncrementalQuery,
+    increment
 
-
-struct IncrementalQuery <: Query
-    step::Int
+struct IncrementalQuery <: Gen_Compose.Query
+    model::Gen.GenerativeFunction
     constraints::Gen.ChoiceMap
     args::Tuple
     argdiffs::Tuple
+    step::Int
 end
 
 function increment(q::IncrementalQuery, cm::Gen.ChoiceMap,
                    new_args::Tuple)
-    _, _, zs... = q.args
+    # TODO: proceduralize with `argdiff`
+    _, zs... = q.args
+    args = (first(new_args), zs...)
     setproperties(q;
                   step = q.step + 1,
                   constraints = cm,
-                  args = (new_args..., zs...))
+                  args = args)
 end
 
 include("pf_module.jl")

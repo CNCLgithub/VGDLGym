@@ -1,46 +1,76 @@
+export VGDLWorldModel,
+    VGDLWorldState,
+    vgdl_wm,
+    vgdl_wm_perceive
+
 struct VGDLWorldModel <: WorldModel
-    game::VGDL.Game
     agent_idx::Int64
     imap::InteractionMap
     tvec::Vector{TerminationRule}
-    graphics::GraphicsModule
+    graphics::Graphics
+    noise::Float64
 end
 
 struct VGDLWorldState <: WorldState{VGDLWorldModel}
     gstate::VGDL.GameState
 end
 
-@gen function vgdl_agent(ai::Int64, prev::VGDLWorldState, wm::VGDLWorldModel)
-    agent = prev.gstate.agents[ai]
+graphics(wm::VGDLWorldModel) = wm.graphics
+
+@gen (static) function vgdl_agent(ai::Int64,
+                                  prev::VGDLWorldState,
+                                  wm::VGDLWorldModel)
+    scene = prev.gstate.scene
+    agent = scene.dynamic[ai]
     # for now, pick a random action
     actions = actionspace(agent)
-    a_ws = Fill(1.0 / length(actions))
-    action_index = @trace(categorical(a_ws), :action)
-    action = actions[action_index]
-    return action
+    nactions = length(actions)
+    a_ws = Fill(1.0 / nactions, nactions)
+    action_index::Int64 = @trace(categorical(a_ws), :action)
+    return action_index
 end
 
-@gen function vgdl_dynamics(t::Int, prev::VGDLWorldState, wm::VGDLWorldModel)
-    # non-self actions
-    nagents = length(prev.agents)
+@gen (static) function vgdl_dynamics(t::Int,
+                                     prev::VGDLWorldState,
+                                     wm::VGDLWorldModel)
+    agent_keys = prev.gstate.scene.dynamic.keys
+    nagents = length(agent_keys)
     prevs = Fill(prev, nagents)
     wms = Fill(wm, nagents)
-    actions = @trace(vgdl_agent_kernel(prevs, wms), :agents)
-    queues = aggregate_actions(wm, actions) # TODO
+    actions = @trace(Gen.Map(vgdl_agent)(agent_keys, prevs, wms),
+                     :agents)
+    queues = action_step(prev.gstate,
+                         Dict(zip(agent_keys, actions)))
     # deterministic forward step
     # REVIEW: consider incremental computation?
-    new_gstate = VGDL.update_step(prev.gstate, queues, wm.imap)
-    new_state = VGDLWorldState(new_gstate) # package
+    new_gstate = VGDL.update_step(prev.gstate, wm.imap, queues)
+    new_state::VGDLWorldState = VGDLWorldState(new_gstate) # package
+    return new_state
 end
 
-@gen function vgdl_perceive(t::Int, prev::VGDLWorldState, wm::VGDLWorldModel)
+@gen (static) function vgdl_obs(t::Int,
+                                prev::VGDLWorldState,
+                                wm::VGDLWorldModel)
     new_state = @trace(vgdl_dynamics(t, prev, wm), :dynamics)
     # predict observation
-    pred_mu, pred_var = render_prediction(wm.graphics, new_gstate)
+    pred_mu = render(wm.graphics, new_state.gstate)
+    pred_var = Fill(wm.noise, size(pred_mu))
     obs = @trace(broadcasted_normal(pred_mu, pred_var), :observe)
     return new_state
 end
 
-@gen function vgdl_world_init()
+@gen function vgdl_wm(t::Int, init::VGDLWorldState, wm::VGDLWorldModel)
+    # TODO: prior
+    states = @trace(Gen.Unfold(vgdl_dynamics)(t, init, wm),
+                    :kernel)
+    return states
+end
 
+@gen (static) function vgdl_wm_perceive(t::Int,
+                                        init::VGDLWorldState,
+                                        wm::VGDLWorldModel)
+    # TODO: prior
+    states = @trace(Gen.Unfold(vgdl_obs)(t, init, wm),
+                    :kernel)
+    return states
 end

@@ -1,24 +1,26 @@
 # Define `GenCompose.InfereceChain` for seq processing
 
+export AdaptivePF,
+    IncPF,
+    IncPerceptionModule
 
 using Gen_Compose: PFChain
 
 @with_kw struct AdaptivePF <: Gen_Compose.AbstractParticleFilter
     particles::Int = 1
     ess::Real = particles * 0.5
-    attention::AbstractAttentionModel
+    attention::AttentionModule
 end
 
-function Gen_Compose.PFChain{Q, P}(q::Q,
-                                   p::P,
-                                   n::Int,
-                                   i::Int = 1) where
+function Gen_Compose.PFChain(q::Q,
+                             p::P,
+                             i::Int = 1) where
     {Q<:IncrementalQuery,
      P<:AdaptivePF}
 
     state = Gen_Compose.initialize_procedure(p, q)
     aux = AdaptiveComputation(p.attention)
-    return PFChain{Q, P}(q, p, state, aux, i, n)
+    return PFChain{Q, P}(q, p, state, aux, i, typemax(i))
 end
 
 function Gen_Compose.step!(chain::PFChain{<:IncrementalQuery, <:AdaptivePF})
@@ -33,11 +35,13 @@ function Gen_Compose.step!(chain::PFChain{<:IncrementalQuery, <:AdaptivePF})
     return nothing
 end
 
-function Gen_Compose.initialize_procedure(proc::AbstractParticleFilter,
-                                          query::IncrementalQuery)
-    args = initial_args(query)
-    constraints = initial_constraints(query)
-    state = Gen.initialize_particle_filter(query.forward_function,
+function Gen_Compose.initialize_procedure(proc::T,
+                                          query::IncrementalQuery
+                                          ) where {
+                                              T<:Gen_Compose.AbstractParticleFilter
+                                          }
+    @unpack model, args, constraints = query
+    state = Gen.initialize_particle_filter(model,
                                            args,
                                            constraints,
                                            proc.particles)
@@ -45,15 +49,31 @@ function Gen_Compose.initialize_procedure(proc::AbstractParticleFilter,
 end
 
 const IncPF = PFChain{<:IncrementalQuery, AdaptivePF}
+
 mutable struct IncPerceptionModule{T} <: PerceptionModule{T}
     chain::IncPF
 end
 
+function IncPerceptionModule(model::Gen.GenerativeFunction,
+                             wm::T, init_state::WorldState{T},
+                             proc_args::Tuple,
+                             ) where {T<:WorldModel}
+    args = (0, init_state, wm) # t = 0
+    # argdiffs: only `t` changes
+    argdiffs = (Gen.UnknownChange(), Gen.NoChange(), Gen.NoChange())
+    query = IncrementalQuery(model, Gen.choicemap(),
+                             args, argdiffs, 1)
+    proc = AdaptivePF(proc_args...)
+    chain = PFChain(query, proc)
+    IncPerceptionModule{T}(chain)
+end
 
-function perceive!(pm::IncPerceptionModule, cm::Gen.ChoiceMap)
+
+function perceive!(pm::IncPerceptionModule, cm::Gen.ChoiceMap,
+                   time::Int)
     # update chain with new constraints
     chain = pm.chain
-    new_args = (chain.step + 1,)
+    new_args = (time,)
     chain.query = increment(chain.query, cm, new_args)
 
     # run inference procedure
@@ -62,4 +82,17 @@ function perceive!(pm::IncPerceptionModule, cm::Gen.ChoiceMap)
     # update reference in perception module
     pm.chain = chain
     return nothing
+end
+
+function transfer(::MAPTransfer, perception::IncPerceptionModule)
+    @unpack chain  = perception
+    @unpack state = chain
+    if chain.step == 1
+        _, state, _ = chain.query.args
+        state
+    else
+        map_idx = argmax(state.log_weights)
+        map_trace = state.traces[map_idx]
+        map_state = last(Gen.get_retval(map_trace))
+    end
 end

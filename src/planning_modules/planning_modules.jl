@@ -1,29 +1,23 @@
+export RandomPlanner,
+    GreedyPlanner
 
-struct MAPTransfer <:TransferModule end
-const map_transfer = MAPTransfer()
+struct RandomPlanner{W<:WorldModel} <: PlanningModule{W} end
 
-function transfer(::MAPTransfer, perception::IncPerceptionModule{<:W})
-    where {W <: WorldModel}
-
-    @unpack chain  = perception
-    @unpack state = chain
-
-    map_idx = argmax(state.logscores)
-    Gen.get_retval(state.traces[map_idx])# ::W
-end
-
-mutable struct RandomPlanner{W} <: PlanningModule{W<:WorldModel}
-    tm::TransferModule
-end
-
-
-function plan!(planner::RandomPlanner{<:W}, wm::W, ws::WorldState{<:W})
-    where {W <: VGDLWorldModel}
-
+function plan!(planner::RandomPlanner{<:W}, wm::W, ws::WorldState{<:W}
+               ) where {W <: VGDLWorldModel}
     # select random action
-    aspace = actionspace(ws.gstate.agents[wm.agent_idx])
+    agent = ws.gstate.scene.dynamic[wm.agent_idx]
+    aspace = actionspace(agent)
     n = length(aspace)
     aidx = categorical(Fill(1.0 / n, n))
-    action = aspace[aidx]
-    return action(wm.agent_idx)
+end
+
+struct GreedyPlanner{W<:WorldModel} <: PlanningModule{W} end
+
+function plan!(planner::GreedyPlanner{<:W}, wm::W, ws::WorldState{<:W}
+               ) where {W <: VGDLWorldModel}
+    scene = ws.gstate.scene
+    agent = scene.dynamic[wm.agent_idx]
+    action = plan(agent, DirectObs(ws.gstate), greedy_policy)
+    action_to_idx(agent, action)
 end

@@ -1,3 +1,5 @@
+using NearestNeighbors: knn
+
 export RandomPlanner,
     GreedyPlanner
 
@@ -18,6 +20,8 @@ function plan!(planner::GreedyPlanner{<:W}, wm::W, ws::WorldState{<:W}
                ) where {W <: VGDLWorldModel}
     scene = ws.gstate.scene
     agent = scene.dynamic[wm.agent_idx]
-    action = plan(agent, DirectObs(ws.gstate), greedy_policy)
+    action = plan(agent, VGDL.DirectObs(ws.gstate), greedy_policy)
     action_to_idx(agent, action)
 end
+
+include("theory_based_planner.jl")

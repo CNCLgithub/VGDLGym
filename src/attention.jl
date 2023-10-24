@@ -33,10 +33,16 @@ end
 function adaptive_compute!(c::InferenceChain, ::UniformAttention)
     @unpack proc, query, state = c
     (t, _, _) = query.args
-    for i = 1:proc.particles
-        state.traces[i] = regenerate_random_latent(state.traces[i],
-                                                   t)
-    end
-
+    kern = tr::Gen.Trace -> move_reweight(tr, select_random_agent(tr))
+    pf_move_reweight!(state, kern, (), 10)
     return nothing
+end
+
+function select_random_agent(tr::Gen.Trace)
+    t, _... = get_args(tr)
+    states = get_retval(tr)
+    state = last(states)
+    nagents = length(state.gstate.scene.dynamic) - 1 # not counting player
+    selected = categorical(Fill(1.0 / nagents), nagents)
+    Gen.select(:kernel => t => :dynamics => (selected + 1) => :action)
 end

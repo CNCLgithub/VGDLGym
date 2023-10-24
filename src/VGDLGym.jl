@@ -3,6 +3,7 @@ module VGDLGym
 using VGDL
 using Gen
 using Gen_Compose
+using GenParticleFilters
 using Parameters
 using FillArrays: Fill
 using DataStructures: OrderedDict, PriorityQueue
@@ -61,6 +62,7 @@ function perceive!(agent::GenAgent, st::GameState, action::Int)
     obs = render(gr, st)
     cm = Gen.choicemap()
     cm[:kernel => st.time => :observe] = obs
+    println("Time $(st.time)")
     viz_obs(obs)
     # add action index as constraint
     agent_idx = agent.world_model.agent_idx # TODO: getter
@@ -68,6 +70,7 @@ function perceive!(agent::GenAgent, st::GameState, action::Int)
         action
 
     perceive!(agent.perception, cm, st.time)
+    viz_world_state(agent.perception)
     return nothing
 end
 

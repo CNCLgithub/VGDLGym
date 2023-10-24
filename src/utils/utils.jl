@@ -2,7 +2,7 @@ using Colors
 using ImageCore
 using ImageInTerminal
 
-function action_to_idx(agent::VGDL.Agent, action::VGDL.Rule)
+function action_to_idx(agent::VGDL.Agent, action::Type{<:VGDL.Rule})
     findfirst(x -> x == action, actionspace(agent))
 end
 

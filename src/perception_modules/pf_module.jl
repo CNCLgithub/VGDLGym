@@ -78,6 +78,7 @@ function perceive!(pm::IncPerceptionModule, cm::Gen.ChoiceMap,
 
     # run inference procedure
     step!(chain)
+    chain.step += 1
 
     # update reference in perception module
     pm.chain = chain
@@ -95,4 +96,15 @@ function transfer(::MAPTransfer, perception::IncPerceptionModule)
         map_trace = state.traces[map_idx]
         map_state = last(Gen.get_retval(map_trace))
     end
+end
+
+function viz_world_state(pm::IncPerceptionModule)
+    _, _, wm = pm.chain.query.args
+    gr = graphics(wm)
+    traces = Gen.sample_unweighted_traces(pm.chain.state,
+                                          length(pm.chain.state.traces))
+    f = tr::Gen.Trace -> render(gr, last(get_retval(tr)).gstate)
+    img = mean(map(f, traces))
+    viz_obs(img)
+    return nothing
 end

@@ -45,7 +45,8 @@ function select_random_agent(tr::Gen.Trace)
     states = get_retval(tr)
     state = last(states)
     nagents = length(state.gstate.scene.dynamic) - 1 # not counting player
-    @show state.gstate.scene.dynamic.keys
+    keys = state.gstate.scene.dynamic.keys
     selected = categorical(Fill(1.0 / nagents, nagents))
-    Gen.select(:kernel => t => :dynamics => :agents => (selected + 1) => :action)
+    agent_idx = keys[selected + 1]
+    Gen.select(:kernel => t => :dynamics => :agents => agent_idx => :action)
 end

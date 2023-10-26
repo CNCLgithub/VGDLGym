@@ -22,10 +22,10 @@ function test()
 
     tm = map_transfer
 
-    proc_args = (100, 50, no_attention)
+    proc_args = (100, 50, uniform_attention)
     q = IncPerceptionModule(vgdl_wm_perceive,
                             wm,
-                            VGDLWorldState(init_state),
+                            ws,
                             proc_args)
 
     p = GreedyPlanner{VGDLWorldModel}()

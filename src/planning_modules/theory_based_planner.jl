@@ -70,54 +70,82 @@ end
 @gen (static) function astar_production(n::AStarProdNode)
     # goal: select best next action or terminate
     #
-    # assuming not terminates yet, pick next action
-    aws = action_weights(n)
-    aidx = @trace(categorical(aws), :action)
+
+    next_states = map(a -> n.evolve(n.state, a), 1:n.nactions)
+    hs = map(n.heuristic, next_states) # in logspace [-Inf, 0]
+    aws = softmax(hs)
+    action = @trace(categorical(hs), :action)
     # deterministic forward step
-    next_state = update_step(n, aidx)
+    next_state = next_states[action]
 
     # determine if new state satisfies any goals
     # or if the planning budget is exhausted
-    satisfied = map(sg -> satisfies(sg, next_state), n.sub_goals)
-    w = production_weight(n, satisfied)
-    s = @trace(bernoulli(w), :produce)
-    children::Vector{QTProdNode} =
-        s ? AStarProdNode(n, next_state) : AStarProdNode[]
-    result = Production(n, children)
+    # if `next_state` fails, the trace will terminate
+    # and go back to the planner to regenerate a new branch
+    w = production_weight(n, hs)
+    s = @trace(bernoulli(w), :produce) # REVIEW: make deterministic?
+    children::Vector{AStarProdNode} =
+        s ? [AStarProdNode(n, next_state)] : AStarProdNode[]
+    step_reward = hs[action]
+    result = Production(step_reward, children)
     return result
 end
 
-function production_weight(n::AStarProdNode, satisfied::Vector{Bool})
-    (n.step == n.max_steps || any(satisfied)) |> Float64
+@gen static function astar_aggregation(r::Float64,
+                                       children::Vector{Float64})
+    total_reward::Float64 = r + sum(children)
+    return total_reward
 end
 
-function VGDL.update_step(n::AStarProdNode, action_idx::Int)
-    queues = action_step(n.world_state,
-                         Dict(n.agent_idx => action_idx))
-    update_step(n.world_state, n.imap, queues)
+function production_weight(n::AStarProdNode, heuristics::Vector{Float64})
+    (n.step < n.max_steps || !(any(iszero, satisfied))) |> Float64
 end
 
-function action_weights(n::AStarProdNode)
-    # assuming sub-goals are not satisfied
-    gradients = map(gr -> gr(n.world_state))
-    normed_weights = n.gradients / sum(n.gradients)
+function VGDL.update_step(n::AStarProdNode, action::Int)
+    prev = n.state
+    t, init_state, wm = get_args(prev)
+    args = (t + 1, init_state, wm)
+    argdiffs = (UnknownChange(), NoChange(), NoChange())
+    cm = Gen.choicemap(
+        (:kernel => (t+1) => :agent => wm.agent_idx, action)
+    )
+    next, _... = Gen.update(prev, args, argdiffs, cm)
+    next
 end
 
-@gen static function astar_aggregation(n::AStarProdNode,
-                                       children::Vector{AStarAggNode})
-    agg::AStarAggNode = AStarAggNode(n, children)
-    return agg
+function AStarNode(prev::AStarProdNode, next_state::Gen.Trace)
+    setproperties(prev; state = next_state, step = prev.step + 1)
+end
+
+struct AStarNode
+    "(state) -> value"
+    heuristic::Function
+    nactions::Int64
+    state::Gen.Trace
+    "Function (state, action) -> new state"
+    evolve::Function
+    step::Int64
+    maxsteps::Int64
+end
+
+
+struct AStarAggNode
+    actions::PersistentList{Int64}
+    actions::PersistentList{Int64}
 end
 
 function AStarAggNode(n::AStarProdNode, c::Vector{AStarAggNode})
 
-    if isempty(c)
-        # at the end of the frontier
-        if n.satisfied === 0
-            # exhausted resources
+    # at the end of the frontier
+    # either because exhausted resources
+    # or because a (+) subgoal is reached
+    seq = isempty(c) ? PerstitentList{Int64}() : first(c)
 
-    else
-    end
+    # select subgoal
+    sg_idx = argmax(n.gradients)
+
+    # add action
+    cons(n.action, seq)
 end
 
 const quad_tree_prior = Recurse(astar_production,

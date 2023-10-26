@@ -1,6 +1,8 @@
 export AdaptiveComputation,
     NoAttention,
-    no_attention
+    no_attention,
+    UniformAttention,
+    uniform_attention
 
 @with_kw mutable struct AdaptiveComputation <: AuxillaryState
     acceptance::Float64 = 0.
@@ -34,7 +36,7 @@ function adaptive_compute!(c::InferenceChain, ::UniformAttention)
     @unpack proc, query, state = c
     (t, _, _) = query.args
     kern = tr::Gen.Trace -> move_reweight(tr, select_random_agent(tr))
-    pf_move_reweight!(state, kern, (), 10)
+    pf_move_reweight!(state, kern)
     return nothing
 end
 
@@ -43,6 +45,7 @@ function select_random_agent(tr::Gen.Trace)
     states = get_retval(tr)
     state = last(states)
     nagents = length(state.gstate.scene.dynamic) - 1 # not counting player
-    selected = categorical(Fill(1.0 / nagents), nagents)
-    Gen.select(:kernel => t => :dynamics => (selected + 1) => :action)
+    @show state.gstate.scene.dynamic.keys
+    selected = categorical(Fill(1.0 / nagents, nagents))
+    Gen.select(:kernel => t => :dynamics => :agents => (selected + 1) => :action)
 end

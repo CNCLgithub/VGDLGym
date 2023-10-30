@@ -88,14 +88,16 @@ end
 function transfer(::MAPTransfer, perception::IncPerceptionModule)
     @unpack chain  = perception
     @unpack state = chain
-    if chain.step == 1
-        _, state, _ = chain.query.args
-        state
-    else
-        map_idx = argmax(state.log_weights)
-        map_trace = state.traces[map_idx]
-        map_state = last(Gen.get_retval(map_trace))
-    end
+    map_idx = argmax(state.log_weights)
+    map_trace = state.traces[map_idx]
+    # if chain.step == 1
+    #     _, state, _ = chain.query.args
+    #     state
+    # else
+    #     map_idx = argmax(state.log_weights)
+    #     map_trace = state.traces[map_idx]
+        # map_state = last(Gen.get_retval(map_trace))
+    # end
 end
 
 function viz_world_state(pm::IncPerceptionModule)

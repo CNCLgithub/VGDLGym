@@ -1,7 +1,8 @@
 export VGDLWorldModel,
     VGDLWorldState,
     vgdl_wm,
-    vgdl_wm_perceive
+    vgdl_wm_perceive,
+    init_world_model
 
 struct VGDLWorldModel <: WorldModel
     agent_idx::Int64
@@ -9,13 +10,41 @@ struct VGDLWorldModel <: WorldModel
     tvec::Vector{TerminationRule}
     graphics::Graphics
     noise::Float64
+    nactions::Int64
 end
+
+graphics(wm::VGDLWorldModel) = wm.graphics
 
 struct VGDLWorldState <: WorldState{VGDLWorldModel}
     gstate::VGDL.GameState
 end
 
-graphics(wm::VGDLWorldModel) = wm.graphics
+game_state(ws::VGDLWorldState) = ws.gstate
+
+function init_world_model(::Type{W},
+                          ::Type{G},
+                          ::Type{U},
+                          init_state::GameState,
+                          noise::Float64
+                          ) where {G<:Game,
+                                   W<:VGDLWorldModel,
+                                   U<:Graphics}
+    imap = compile_interaction_set(G)
+    tset = termination_set(G)
+    graphics = U(G)
+
+    agent = init_state.scene.dynamic[1]
+    nactions = length(actionspace(agent))
+
+    wm = VGDLWorldModel(1, # Player is the first agent
+                        imap,
+                        tset,
+                        graphics,
+                        noise,
+                        nactions)
+    ws = VGDLWorldState(init_state)
+    wm, ws
+end
 
 @gen (static) function vgdl_agent(ai::Int64,
                                   prev::VGDLWorldState,

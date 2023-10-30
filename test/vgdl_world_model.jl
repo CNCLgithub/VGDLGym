@@ -10,15 +10,15 @@ function test()
     # limit time
     init_state.max_time = 500
 
-    graphics = PixelGraphics(G)
-    noise = 0.2
     @assert typeof(init_state.scene.dynamic[1]) <: Player
-    wm = VGDLWorldModel(1, # Player is the first agent
-                        imap,
-                        tset,
-                        graphics,
-                        noise)
-    ws = VGDLWorldState(init_state)
+
+    noise = 0.2 # noise for graphics
+
+    wm, ws = init_world_model(VGDLWorldModel,
+                              G,
+                              PixelGraphics,
+                              init_state,
+                              noise)
 
     tm = map_transfer
 
@@ -32,7 +32,7 @@ function test()
 
     agent = GenAgent(wm, tm, q, p)
     agent_idx = 1 # by convention
-    gym = SoloGym(imap, tset, init_state, agent,
+    gym = SoloGym(wm.imap, wm.tvec, init_state, agent,
                   agent_idx)
 
     run_gym!(gym)

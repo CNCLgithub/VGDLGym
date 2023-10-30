@@ -7,7 +7,9 @@ using GenParticleFilters
 using Parameters
 using FillArrays: Fill
 using DataStructures: OrderedDict, PriorityQueue
-using Accessors: setproperties
+using Accessors
+using StaticArrays
+using Graphs
 
 #################################################################################
 # Exports

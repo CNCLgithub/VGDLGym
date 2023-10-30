@@ -1,155 +1,31 @@
-export TheoryBasedPlanner
+export replan!
 
-
-function to_graph(ws::VGDLWorldState)
-    state = ws.gstate
-    dy, _ = state.scene.bounds
-    nv = length(state.scene.static)
-    adj_matrix = fill(false, (nv, nv))
-    for i = 1:(nv -1), j = (i+1):nv
-        d = abs(j - i)
-        !(d == 1 || d == dy) && continue
-        adj_matrix[i, j] = adj_matrix[j, i ] = true
+function consolidate(sgs::Vector{Goal})
+    tr::Gen.Trace -> begin
+        _, _, wm = get_args(tr)
+        st = game_state(last(get_retval(tr)))
+        info = Info(st, wm.agent_idx)
+        sum(map(g -> gradient(g, info), sgs))
     end
-    SimpleGraph(adj_matrix)
 end
 
-function deconstruct(goals::Vector{Goal}, ws::VGDLWorldState, wm::VGDLWorldModel)
-    state = ws.gstate
-    g = to_graph(ws)
-    agent = state.scene.dynamic[wm.agent_idx]
-    dy, dx = state.scene.bounds
-    lpos = (agent.pos[2] - 1) * dy + agent.pos[2]
-    gds = gdistances(g, lpos)
-    fdist = (el) -> begin
-        y,x = el.pos
-        idx = (x - 1) * dy + y
-        -log(gds[idx] + 1)
-    end
+# function replan!(planner::TheoryBasedPlanner{<:W}, wm::W, ws::WorldState{<:W},
+function replan!(wm::W, ws::WorldState{<:W},
+                 subgoals::Vector{Goal},
+                 ) where {W <: VGDLWorldModel}
+    heuristic = consolidate(subgoals)
+    args = (0, ws, wm)
+    tr, _ = Gen.generate(vgdl_wm, args)
+    start_node = AStarNode(heuristic,
+                           wm.nactions,
+                           tr,
+                           evolve,
+                           0,
+                           10,
+                           )
 
-    sub_goals = vcat(map(g -> decompose(g, state), goals))
-    gradients =
-
-end
-
-
-
-
-
-
-
-
-mutable struct TheoryBasedPlanner{W<:WorldModel} <: PlanningModule{W}
-    goals::Vector{TerminationRule}
-    subgoals
-    gradients
-    horizon::AStarHorizon
-end
-
-
-# get_all(T)
-# eval(get_all(T)) = all(map(eval, [get(x_1), get(x_2), ..., get(x_n)]))
-
-function plan!(planner::TheoryBasedPlanner{<:W}, wm::W, ws::WorldState{<:W}
-               ) where {W <: WorldModel}
-
-    # re-evaluate subgoals?
-    new_sg = deconstruct(planner.goals, ws)
-    sg_diff = setdiff(planner.subgoals, new_sg)
-    if !isempty(sg_diff)
-        replan!(planner, wm, ws, new_sg)
-    else
-        # reweight horizon
-        reweight!(planner.horizon, planner.goals)
-    end
-
-    action = next_action(planner.horizon)
-
-
-    scene = ws.gstate.scene
-    agent = scene.dynamic[wm.agent_idx]
-    action_to_idx(wm.agent, action)
-end
-
-mutable struct TBPState{W<:WorldModel}
-    horizon::Gen.Trace
-    goals::Vector{<:Goal{W}}
-    sub_goals::Vector{<:SubGoal{W}}
-
-end
-
-#
-
-function replan!(planner::TheoryBasedPlanner{<:W}, wm::W, ws::WorldState{<:W},
-                 subgoals) where {W <: VGDLWorldModel}
-
-    # 1. convert world state to graph
-    gr = to_graph(ws)
-
-    # 2. setup a-star to select subgoal
-    gradients = map(gradient, subgoals)
-    horizon = AStarHorizon(gr, subgoals, gradients)
-
-    # 3. expand horizon with max steps, looking for subgoals
-    completed = false
-    n = 0
-    while !completed || n < budget
-        selected = explore_horizon!(horizon)
-        completed = selected != 0
-        n += 1
-    end
-
-end
-
-
-@gen (static) function astar_production(n::AStarNode)
-    # goal: select best next action or terminate
-    #
-
-    next_states = map(a -> n.evolve(n.state, a), 1:n.nactions)
-    hs = map(n.heuristic, next_states) # in logspace [-Inf, 0]
-    aws = softmax(hs)
-    action = @trace(categorical(hs), :action)
-    # deterministic forward step
-    next_state = next_states[action]
-
-    # determine if new state satisfies any goals
-    # or if the planning budget is exhausted
-    # if `next_state` fails, the trace will terminate
-    # and go back to the planner to regenerate a new branch
-    w = production_weight(n, hs)
-    s = @trace(bernoulli(w), :produce) # REVIEW: make deterministic?
-    children::Vector{AStarNode} =
-        s ? [AStarNode(n, next_state)] : AStarNode[]
-    step_reward = hs[action]
-    result = Production(step_reward, children)
-    return result
-end
-
-@gen static function astar_aggregation(r::Float64,
-                                       children::Vector{Float64})
-    total_reward::Float64 = r + sum(children)
-    return total_reward
-end
-
-function production_weight(n::AStarNode, heuristics::Vector{Float64})
-    (n.step < n.max_steps || !(any(iszero, satisfied))) |> Float64
-end
-
-function VGDL.update_step(n::AStarNode, action::Int)
-    prev = n.state
-    t, init_state, wm = get_args(prev)
-    args = (t + 1, init_state, wm)
-    argdiffs = (UnknownChange(), NoChange(), NoChange())
-    cm = Gen.choicemap(
-        (:kernel => (t+1) => :agent => wm.agent_idx, action)
-    )
-    next, _... = Gen.update(prev, args, argdiffs, cm)
-    next
-end
-
-function AStarNode(prev::AStarNode, next_state::Gen.Trace)
-    setproperties(prev; state = next_state, step = prev.step + 1)
+    ptr, _ = Gen.generate(astar_plan, (start_node,))
+    ptr
 end
 
 struct AStarNode
@@ -163,28 +39,129 @@ struct AStarNode
     maxsteps::Int64
 end
 
+
+function AStarNode(maxsteps::Int64,
+                   subgoals::Vector{Goal},
+                   nactions::Int64,
+                   forward::Function,
+                   world_state::Gen.Trace)
+
+    AStarNode(consolidate(subgoals),
+              nactions,
+              world_state,
+              forward,
+              0,
+              maxsteps)
+end
+
+
+@gen (static) function astar_production(n::AStarNode)
+    # goal: select best next action or terminate
+    #
+    next_states = explore(n)
+    # heuristic refs could fail after action
+    # example: butterfly is caught
+    # question: should heuristic return 0?
+    # question: should subgoals be revised?
+    hfunc = n.heuristic
+    hs = map(hfunc, next_states) # in logspace [-Inf, 0]
+    aws = softmax(hs)
+    action = @trace(categorical(aws), :action)
+    # deterministic forward step
+    next_state = next_states[action]
+    step_heuristic = hs[action]
+
+    # determine if new state satisfies any goals
+    # or if the planning budget is exhausted
+    # if `next_state` fails, the trace will terminate
+    # and go back to the planner to regenerate a new branch
+    w = production_weight(n, step_heuristic)
+    s = @trace(bernoulli(w), :produce) # REVIEW: make deterministic?
+    children::Vector{AStarNode} =
+        s ? [AStarNode(n, next_state)] : AStarNode[]
+    result = Production(step_heuristic, children)
+    return result
+end
+
+@gen static function astar_aggregation(r::Float64,
+                                       children::Vector{Float64})
+    total_reward::Float64 = r + get(children, 1, 0.0)
+    return total_reward
+end
+
+function production_weight(n::AStarNode, heuristic::Float64)
+    (n.step < n.maxsteps && heuristic < 0) |> Float64
+end
+
+function evolve(n::AStarNode, action::Int)
+    prev = n.state
+    t, init_state, wm = get_args(prev)
+    args = (t + 1, init_state, wm)
+    argdiffs = (UnknownChange(), NoChange(), NoChange())
+    cm = Gen.choicemap(
+        (:kernel => (t+1) => :agent => wm.agent_idx, action)
+    )
+    next, ls, _... = Gen.update(prev, args, argdiffs, cm)
+    next
+end
+
+function explore(n::AStarNode)
+    efunc = n.evolve
+    steps = 1:(n.nactions)
+    map(a -> efunc(n, a), steps)
+end
+
+function AStarNode(prev::AStarNode, next_state::Gen.Trace)
+    # @show (prev.heuristic(next_state))
+    setproperties(prev; state = next_state, step = prev.step + 1)
+end
+
 # struct AStarAggNode
 #     actions::PersistentList{Int64}
 #     actions::PersistentList{Int64}
 # end
 
-function AStarAggNode(n::AStarProdNode, c::Vector{AStarAggNode})
 
-    # at the end of the frontier
-    # either because exhausted resources
-    # or because a (+) subgoal is reached
-    seq = isempty(c) ? PerstitentList{Int64}() : first(c)
+const astar_recurse = Recurse(astar_production,
+                              astar_aggregation,
+                              1, # max children
+                              AStarNode,# U (production to children)
+                              Float64,# V (production to aggregation)
+                              Float64) # W (aggregation to parents)
 
-    # select subgoal
-    sg_idx = argmax(n.gradients)
-
-    # add action
-    cons(n.action, seq)
+@gen function astar_plan(start_node::AStarNode)
+    plan_cost = @trace(astar_recurse(start_node, 1), :recurse)
+    return plan_cost
 end
 
-const astar_gm = Recurse(astar_production,
-                         astar_aggregation,
-                         1, # max children
-                         AStarNode,# U (production to children)
-                         Float64,# V (production to aggregation)
-                         Float64) # W (aggregation to parents)
+
+# export TheoryBasedPlanner
+
+
+# mutable struct TheoryBasedPlanner{W<:WorldModel} <: PlanningModule{W}
+#     goals::Vector{TerminationRule}
+#     horizon::Gen.Trace
+# end
+
+
+# # get_all(T)
+# # eval(get_all(T)) = all(map(eval, [get(x_1), get(x_2), ..., get(x_n)]))
+
+# function plan!(planner::TheoryBasedPlanner{<:W}, wm::W, ws::WorldState{W},
+#                ) where {W <: WorldModel}
+
+#     ws = get_world_state(wm, ps)
+#     # re-evaluate subgoals?
+#     new_sg = deconstruct(planner.goals, ws)
+#     sg_diff = setdiff(planner.subgoals, new_sg)
+#     if !isempty(sg_diff)
+#         replan!(planner, wm, ws, ps, new_sg)
+#     else
+#         # reweight horizon
+#         reweight!(planner.horizon, planner.goals)
+#     end
+
+#     action = next_action(planner.horizon)
+#     agent = scene.dynamic[wm.agent_idx]
+#     action_to_idx(wm.agent, action)
+# end

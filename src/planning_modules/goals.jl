@@ -85,23 +85,17 @@ struct Info
     distances
 end
 
-function Info(state::GameState, agent_idx::Int64)
-    g = to_graph(state)
-    agent = state.scene.dynamic[agent_idx]
-    dy, dx = state.scene.bounds
-    lpos = (agent.position[2] - 1) * dy + agent.position[2]
-    gds = gdistances(g, lpos)
-    Info(state, gds)
-end
-
-function to_graph(state::GameState)
+function affordances(state::GameState)
     dy, _ = state.scene.bounds
+    tiles = state.scene.static
     nv = length(state.scene.static)
     adj_matrix = fill(false, (nv, nv))
-    for i = 1:(nv -1), j = (i+1):nv
-        d = abs(j - i)
-        !(d == 1 || d == dy) && continue
-        adj_matrix[i, j] = adj_matrix[j, i ] = true
+    @inbounds for i = 1:(nv -1)
+        for j = [i - 1, i + 1, i - dy, i + dy]
+            ((j >= 1 && j <= nv) && (tiles[i] == tiles[j])) ||
+                continue
+            adj_matrix[i, j] = adj_matrix[j, i ] = true
+        end
     end
     SimpleGraph(adj_matrix)
 end

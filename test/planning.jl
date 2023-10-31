@@ -1,6 +1,8 @@
 using Gen
 using VGDL
 using VGDLGym
+# using Profile
+# using StatProfilerHTML
 
 
 function test()
@@ -23,18 +25,33 @@ function test()
 
     goals = [
         Goal(AllRef{Butterfly}(), Get()),
-        Goal(AllRef{Pinecone}(), Count())
+        # Goal(AllRef{Pinecone}(), Count())
     ]
 
     info = Info(init_state, 1)
     sgs = reduce(vcat, map(g -> decompose(g, info), goals))
 
+    @time tr = replan!(wm, ws, sgs, 5)
+    choices = get_choices(tr)
+    display(choices)
+    @show typeof(tr)
+    @show typeof(tr.production_traces)
+    @show length(tr.production_traces)
 
-    @time tr = replan!(wm, ws, sgs)
+    @show typeof(get_retval(tr.production_traces[1]))
+    @show typeof(get_submap(choices, (1, Val(:production))))
+    @show choices[(1, Val(:production)) => :action]
+
+    @time extended = extend_plan(tr, 5)
+    display(get_choices(extended))
+    # @show tr[(1, Val(:production))]
+    # @show length(sgs)
+    # @show get_retval(tr)
+    # Profile.init(n = 10^7, delay = 0.0001)
+    # Profile.clear()
+    # @profilehtml replan!(wm, ws, sgs);
 
     # display(get_choices(tr))
-
-
 end
 
 test();

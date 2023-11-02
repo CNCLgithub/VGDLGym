@@ -1,6 +1,41 @@
+#################################################################################
+# Exports
+#################################################################################
 export replan!,
     extend_plan,
     integrate_update
+
+#################################################################################
+# TheoryBasedPlanner
+#################################################################################
+
+mutable struct TheoryBasedPlanner{W<:WorldModel} <: PlanningModule{W}
+    world_model::W
+    goals::Vector{Goal}
+    horizon::Gen.Trace # from AStarRecurse
+    agraph::SimpleGraph
+end
+
+
+function plan!(planner::TheoryBasedPlanner{<:W}, wm::W, ws::WorldState{W},
+               ) where {W <: WorldModel}
+
+    gs = gamestate(ws)
+    info = Info(gs, )
+    # re-evaluate subgoals?
+    new_sg = deconstruct(planner.goals, ws)
+    sg_diff = setdiff(planner.subgoals, new_sg)
+    if !isempty(sg_diff)
+        replan!(planner, wm, ws, ps, new_sg)
+    else
+        # reweight horizon
+        reweight!(planner.horizon, planner.goals)
+    end
+
+    action = next_action(planner.horizon)
+    agent = scene.dynamic[wm.agent_idx]
+    action_to_idx(wm.agent, action)
+end
 
 function consolidate(sgs::Vector{<:Goal}, agraph)
     n = length(sgs)
@@ -83,6 +118,11 @@ function integrate_update(plan_tr::Gen.Trace,
                               cm)
     nw - prev_w
 end
+
+
+#################################################################################
+# AStarRecurse
+#################################################################################
 
 struct AStarNode
     "(state) -> [value]"
@@ -180,34 +220,3 @@ const astar_recurse = Recurse(astar_production,
                               AStarNode,# U (production to children)
                               AStarStep,# V (production to aggregation)
                               AStarStep) # W (aggregation to parents)
-
-# export TheoryBasedPlanner
-
-
-# mutable struct TheoryBasedPlanner{W<:WorldModel} <: PlanningModule{W}
-#     goals::Vector{TerminationRule}
-#     horizon::Gen.Trace
-# end
-
-
-# # get_all(T)
-# # eval(get_all(T)) = all(map(eval, [get(x_1), get(x_2), ..., get(x_n)]))
-
-# function plan!(planner::TheoryBasedPlanner{<:W}, wm::W, ws::WorldState{W},
-#                ) where {W <: WorldModel}
-
-#     ws = get_world_state(wm, ps)
-#     # re-evaluate subgoals?
-#     new_sg = deconstruct(planner.goals, ws)
-#     sg_diff = setdiff(planner.subgoals, new_sg)
-#     if !isempty(sg_diff)
-#         replan!(planner, wm, ws, ps, new_sg)
-#     else
-#         # reweight horizon
-#         reweight!(planner.horizon, planner.goals)
-#     end
-
-#     action = next_action(planner.horizon)
-#     agent = scene.dynamic[wm.agent_idx]
-#     action_to_idx(wm.agent, action)
-# end

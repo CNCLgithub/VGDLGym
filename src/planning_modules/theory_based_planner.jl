@@ -1,5 +1,6 @@
 export replan!,
-    extend_plan
+    extend_plan,
+    integrate_update
 
 function consolidate(sgs::Vector{<:Goal}, agraph)
     n = length(sgs)
@@ -44,24 +45,43 @@ end
 function extend_plan(plan_tr::Gen.Trace, steps::Int64)
     n = length(plan_tr.production_traces)
     start_node = get_retval(plan_tr).node
-    @show typeof(start_node)
     start_node = setproperties(start_node;
                                maxsteps = n + steps)
     extended, _... = Gen.generate(astar_recurse, (start_node, n + 1))
-    # start_node, start_idx = get_args(plan_tr)
-    # start_node = setproperties(start_node;
-    #                            maxsteps = start_node.maxsteps + steps)
-    # cm = choicemap(get_choices(plan_tr))
-    # cm[(n, Val(:production)) => :produce] = true
-    # extended, _ = Gen.generate(astar_recurse, (start_node, 1),
-    #                            cm)
-
-    # cm = choicemap(((n, Val(:production)) => :produce, true))
-    # extended, _... = Gen.update(plan_tr,
-    #                             (start_node, start_idx),
-    #                             (UnknownChange(), NoChange()),
-    #                             cm)
     extended
+end
+
+function integrate_update(plan_tr::Gen.Trace,
+                          state::Gen.Trace,
+                          current::Int64,
+                          maxsteps::Int64)
+    # retreive node that will be revisited
+    choices = get_choices(plan_tr)
+    n = length(plan_tr.production_traces)
+    parent_addr = (current - 1, Val(:production))
+    # parent_subtrace = get_submap(choices, parent_addr).trace
+    parent_subtrace = plan_tr.production_traces[current - 1]
+    node = get_retval(parent_subtrace).value.node
+    # update node with new state and adjust horizon size
+    k = min(n, current + maxsteps - 1)
+    node = setproperties(node;
+                         state = state,
+                         maxsteps = k)
+    # extract choices from current plan
+    cm = choicemap()
+    prev_w::Float64 = 0.0
+    for t = current:k
+        addr = (t, Val(:production)) => :action
+        cm[addr] = plan_tr[addr]
+        prev_w += Gen.project(plan_tr.production_traces[t],
+                               select(:action))
+    end
+    # TODO: project is not implemented for `Recurse`
+    # prev_w = Gen.project(plan_tr, sl)
+    new_tr, nw = Gen.generate(astar_recurse,
+                              (node, current),
+                              cm)
+    nw - prev_w
 end
 
 struct AStarNode
@@ -141,7 +161,7 @@ function evolve(n::AStarNode, action::Int)
     cm = Gen.choicemap(
         (:kernel => (t+1) => :agent => wm.agent_idx, action)
     )
-    next, ls, _... = Gen.update(prev, args, argdiffs, cm)
+    next, _... = Gen.update(prev, args, argdiffs, cm)
     next
 end
 

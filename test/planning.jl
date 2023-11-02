@@ -33,17 +33,22 @@ function test()
 
     @time tr = replan!(wm, ws, sgs, 5)
     choices = get_choices(tr)
-    display(choices)
-    @show typeof(tr)
-    @show typeof(tr.production_traces)
-    @show length(tr.production_traces)
 
     @show typeof(get_retval(tr.production_traces[1]))
     @show typeof(get_submap(choices, (1, Val(:production))))
-    @show choices[(1, Val(:production)) => :action]
+    # @show choices[(1, Val(:production)) => :action]
 
     @time extended = extend_plan(tr, 5)
-    display(get_choices(extended))
+    # display(get_choices(extended))
+
+    node = get_retval(get_submap(choices, (1, Val(:production))).trace).value.node
+    action = choices[(1, Val(:production)) => :action]
+    alternate_state = VGDLGym.evolve(node, action)
+
+    @time w = integrate_update(tr, alternate_state, 2, 2)
+    @show w
+
+    
     # @show tr[(1, Val(:production))]
     # @show length(sgs)
     # @show get_retval(tr)

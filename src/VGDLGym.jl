@@ -37,6 +37,8 @@ function graphics end
 abstract type WorldState{T<:WorldModel} end
 
 include("utils/utils.jl")
+# TODO: re-organize
+include("goals.jl")
 include("world_models/world_models.jl")
 
 abstract type AttentionModule end

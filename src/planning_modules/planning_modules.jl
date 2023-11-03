@@ -24,5 +24,4 @@ function plan!(planner::GreedyPlanner{<:W}, wm::W, ws::WorldState{<:W}
     action_to_idx(agent, action)
 end
 
-include("goals.jl")
 include("theory_based_planner.jl")

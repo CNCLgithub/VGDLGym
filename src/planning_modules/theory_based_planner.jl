@@ -23,7 +23,7 @@ function plan!(planner::TheoryBasedPlanner{<:W}, wm::W, ws::WorldState{W},
     gs = gamestate(ws)
     info = Info(gs, )
     # re-evaluate subgoals?
-    new_sg = deconstruct(planner.goals, ws)
+    new_sg = decompose(planner.goals, ws)
     sg_diff = setdiff(planner.subgoals, new_sg)
     if !isempty(sg_diff)
         replan!(planner, wm, ws, ps, new_sg)

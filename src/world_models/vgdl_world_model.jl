@@ -46,6 +46,11 @@ function init_world_model(::Type{W},
     wm, ws
 end
 
+function Info(wm::VGDLWorldModel, ws::VGDLWorldState)
+    gs = game_state(ws)
+    Info(gs)
+end
+
 @gen (static) function vgdl_agent(ai::Int64,
                                   prev::VGDLWorldState,
                                   wm::VGDLWorldModel)

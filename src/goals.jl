@@ -85,21 +85,6 @@ struct Info
     distances
 end
 
-function affordances(state::GameState)
-    dy, _ = state.scene.bounds
-    tiles = state.scene.static
-    nv = length(state.scene.static)
-    adj_matrix = fill(false, (nv, nv))
-    @inbounds for i = 1:(nv -1)
-        for j = [i - 1, i + 1, i - dy, i + dy]
-            ((j >= 1 && j <= nv) && (tiles[i] == tiles[j])) ||
-                continue
-            adj_matrix[i, j] = adj_matrix[j, i ] = true
-        end
-    end
-    SimpleGraph(adj_matrix)
-end
-
 #################################################################################
 # Get
 #################################################################################
@@ -112,7 +97,6 @@ function gradient(g::Goal{R,S}, info) where {R<:SingularRef, S<:Get}
     d = distance_to(info, reference(g))
     -d
 end
-
 
 # function evaluate(g::Goal{R,S}, info) where {R<:AllRef, S<:Get}
 #     sgs = decompose(g, info)

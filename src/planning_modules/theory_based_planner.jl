@@ -12,23 +12,51 @@ export replan!,
 mutable struct TheoryBasedPlanner{W<:WorldModel} <: PlanningModule{W}
     world_model::W
     goals::Vector{Goal}
+    subgoals::Vector{Goal}
     horizon::Gen.Trace # from AStarRecurse
-    agraph::SimpleGraph
 end
 
-
-function plan!(planner::TheoryBasedPlanner{<:W}, wm::W, ws::WorldState{W},
+function plan!(planner::TheoryBasedPlanner{<:W}, wm::W,
+               percept::Gen.Trace,
                ) where {W <: WorldModel}
 
-    gs = gamestate(ws)
-    info = Info(gs, )
-    # re-evaluate subgoals?
-    new_sg = decompose(planner.goals, ws)
-    sg_diff = setdiff(planner.subgoals, new_sg)
-    if !isempty(sg_diff)
-        replan!(planner, wm, ws, ps, new_sg)
-    else
-        # reweight horizon
+    ws::WorldState{W} = extract_worldstate(wm, percept)
+    info = Info(wm, ws)
+    # re-evaluate subgoals
+    subgoals = decompose(planner.goals, info)
+    sg_diff = setdiff(planner.subgoals, subgoals)
+
+
+    horizon = planner.horizon
+
+    if (!isempty(sg_diff)
+        # full replan
+        horizon = replan(wm, ws, subgoals,
+                         planner.replan_steps)
+        subgoals = select_subgoal(horizon)
+
+    end
+
+    # divergent world state
+    (current_t, _, _) = get_args(percept)
+    alpha  = integrate_update(horizon,
+                                percept,
+                                current_t,
+                                planner.max_integration)
+
+    if rand() > alpha
+        # replan
+        #
+        # question: replan + new subgoal selection?
+        # REVIEW: could optionall extend plan from `integrate_update`
+        multi_horizon = replan(wm, ws, new_sgs,
+                               planner.replan_steps)
+        subgoals = select_subgoal(multi_horizon)
+    end
+
+
+    elseif
+        # number of steps remaining to extend horizon
         reweight!(planner.horizon, planner.goals)
     end
 
@@ -57,12 +85,10 @@ function consolidate(sgs::Vector{<:Goal}, agraph)
     end
 end
 
-# function replan!(planner::TheoryBasedPlanner{<:W}, wm::W, ws::WorldState{<:W},
-function replan!(wm::W, ws::WorldState{<:W},
+function replan(wm::W, ws::WorldState{<:W},
                  subgoals::Vector{<:Goal},
                  max_steps::Int64
                  ) where {W <: VGDLWorldModel}
-    d = affordances(game_state(ws))
     heuristic = consolidate(subgoals, d)
     args = (0, ws, wm)
     tr, _ = Gen.generate(vgdl_wm, args)

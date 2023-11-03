@@ -28,25 +28,40 @@ function test()
         # Goal(AllRef{Pinecone}(), Count())
     ]
 
-    info = Info(init_state, 1)
+    info = Info(wm, ws)
     sgs = reduce(vcat, map(g -> decompose(g, info), goals))
 
-    @time tr = replan!(wm, ws, sgs, 5)
+    agraph = affordances(init_state)
+    heuristic = consolidate(sgs, agraph)
+
+    println("replan")
+    @time tr = replan(wm, ws, heuristic, 5)
     choices = get_choices(tr)
 
-    @show typeof(get_retval(tr.production_traces[1]))
-    @show typeof(get_submap(choices, (1, Val(:production))))
+    selected_subgoal = select_subgoal(tr)
+    @show selected_subgoal
+    small_heuristic = consolidate([sgs[selected_subgoal]], agraph)
+    @time small_tr = replan(wm, ws, small_heuristic, 5)
+    # display(choices)
+    # display(get_choices(small_tr))
+
+    # @show typeof(get_retval(tr.production_traces[1]))
+    # @show typeof(get_submap(choices, (1, Val(:production))))
     # @show choices[(1, Val(:production)) => :action]
 
-    @time extended = extend_plan(tr, 5)
-    # display(get_choices(extended))
+    println("plan shift")
+    @time (shifted, sw) = shift_plan(tr, 5, 5)
+    # display(choices)
+    # display(get_choices(shifted))
 
     node = get_retval(get_submap(choices, (1, Val(:production))).trace).value.node
     action = choices[(1, Val(:production)) => :action]
     alternate_state = VGDLGym.evolve(node, action)
 
-    @time w = integrate_update(tr, alternate_state, 2, 2)
+    println("integrate update")
+    @time (new_tr, w) = integrate_update(tr, alternate_state, 2, 2)
     @show w
+
 
     
     # @show tr[(1, Val(:production))]

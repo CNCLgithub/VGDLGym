@@ -6,7 +6,8 @@ export VGDLWorldModel,
     VGDLWorldState,
     vgdl_wm,
     vgdl_wm_perceive,
-    init_world_model
+    init_world_model,
+    affordances # TODO: general method
 
 #################################################################################
 # World model specification
@@ -57,7 +58,7 @@ end
 function Info(wm::VGDLWorldModel, ws::VGDLWorldState)
     gs = game_state(ws)
     d = affordances(gs)
-    Info(gs)
+    Info(gs, d)
 end
 
 
@@ -74,6 +75,11 @@ function affordances(state::GameState)
         end
     end
     SimpleGraph(adj_matrix)
+end
+
+function extract_ws(wm::VGDLWorldModel, tr::Gen.Trace)
+    (t, ws, _) = get_args(tr)
+    t == 0 ? ws : last(get_retval(tr))
 end
 
 #################################################################################

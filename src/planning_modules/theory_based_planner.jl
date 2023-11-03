@@ -1,9 +1,12 @@
 #################################################################################
 # Exports
 #################################################################################
-export replan!,
-    extend_plan,
-    integrate_update
+export consolidate,
+    select_subgoal,
+    replan,
+    shift_plan,
+    integrate_update,
+    TheoryBasedPlanner
 
 #################################################################################
 # TheoryBasedPlanner
@@ -12,57 +15,77 @@ export replan!,
 mutable struct TheoryBasedPlanner{W<:WorldModel} <: PlanningModule{W}
     world_model::W
     goals::Vector{Goal}
+    search_steps::Int64
+    replan_steps::Int64
+    integration_steps::Int64
+    shift_steps::Int64
+    horizon::Union{Gen.RecurseTrace, Nothing}
     subgoals::Vector{Goal}
-    horizon::Gen.Trace # from AStarRecurse
 end
 
-function plan!(planner::TheoryBasedPlanner{<:W}, wm::W,
+function plan!(pl::TheoryBasedPlanner{<:W},
+               wm::W,
                percept::Gen.Trace,
                ) where {W <: WorldModel}
 
-    ws::WorldState{W} = extract_worldstate(wm, percept)
+    ws::WorldState{W} = extract_ws(wm, percept)
     info = Info(wm, ws)
+
     # re-evaluate subgoals
-    subgoals = decompose(planner.goals, info)
-    sg_diff = setdiff(planner.subgoals, subgoals)
+    subgoals = pl.subgoals
+    new_subgoals::Vector{Goal} =
+        reduce(vcat, map(g -> decompose(g, info), pl.goals))
+    sg_diff = setdiff(subgoals, new_subgoals)
 
-
-    horizon = planner.horizon
-
-    if (!isempty(sg_diff)
+    local horizon::Gen.RecurseTrace
+    replanned::Bool = false
+    if length(sg_diff) !== length(subgoals) || isnothing(pl.horizon)
         # full replan
-        horizon = replan(wm, ws, subgoals,
-                         planner.replan_steps)
-        subgoals = select_subgoal(horizon)
-
+        gs = game_state(ws)
+        d = affordances(gs)
+        subgoals = new_subgoals
+        heuristic = consolidate(subgoals, d)
+        horizon = replan(wm, ws, heuristic,
+                         pl.search_steps)
+        # REVIEW: select more than 1?
+        subgoals = [subgoals[select_subgoal(horizon)]]
+        heuristic = consolidate(subgoals, d)
+        horizon = replan(wm, ws, heuristic,
+                         pl.replan_steps)
+        replanned = true
+    else
+        horizon = pl.horizon
     end
 
-    # divergent world state
+
     (current_t, _, _) = get_args(percept)
-    alpha  = integrate_update(horizon,
-                                percept,
-                                current_t,
-                                planner.max_integration)
+    if !isnothing(pl.horizon)
+        # divergent world state
+        (_, alpha) =
+            integrate_update(horizon,
+                            percept,
+                            current_t,
+                            pl.integration_steps)
 
-    if rand() > alpha
-        # replan
-        #
-        # question: replan + new subgoal selection?
-        # REVIEW: could optionall extend plan from `integrate_update`
-        multi_horizon = replan(wm, ws, new_sgs,
-                               planner.replan_steps)
-        subgoals = select_subgoal(multi_horizon)
+        if rand() > -alpha
+            # replan
+            # REVIEW: replan + new subgoal selection?
+            # REVIEW: could extend plan from `integrate_update`
+            horizon = replan(wm, ws, heuristic,
+                            pl.replan_steps)
+            replanned = true
+        end
     end
 
-
-    elseif
-        # number of steps remaining to extend horizon
-        reweight!(planner.horizon, planner.goals)
+    if !replanned
+        horizon = shift_plan(horizon, current_t,
+                             pl.shift_steps)
     end
 
-    action = next_action(planner.horizon)
-    agent = scene.dynamic[wm.agent_idx]
-    action_to_idx(wm.agent, action)
+    pl.horizon = horizon
+    pl.subgoals = subgoals
+
+    planned_action(pl, horizon, current_t+1)
 end
 
 function consolidate(sgs::Vector{<:Goal}, agraph)
@@ -85,13 +108,22 @@ function consolidate(sgs::Vector{<:Goal}, agraph)
     end
 end
 
+function planned_action(pl::TheoryBasedPlanner{<:W}, tr::Gen.RecurseTrace,
+                        t::Int64) where {W<:VGDLWorldModel}
+    step = get_step(tr, t)
+    step.action
+end
+
 function replan(wm::W, ws::WorldState{<:W},
-                 subgoals::Vector{<:Goal},
-                 max_steps::Int64
-                 ) where {W <: VGDLWorldModel}
-    heuristic = consolidate(subgoals, d)
+                heuristic,
+                max_steps::Int64
+                ) where {W <: VGDLWorldModel}
+    # initialize world state at current time
+    gs = game_state(ws)
     args = (0, ws, wm)
     tr, _ = Gen.generate(vgdl_wm, args)
+    # planning node points to current world
+    # state and heuristic
     start_node = AStarNode(heuristic,
                            wm.nactions,
                            tr,
@@ -99,50 +131,96 @@ function replan(wm::W, ws::WorldState{<:W},
                            max_steps,
                            )
 
-    ptr, _ = Gen.generate(astar_recurse, (start_node, 1))
+    args = (start_node, gs.time + 1)
+    ptr, _ = Gen.generate(astar_recurse, args)
     ptr
 end
 
-function extend_plan(plan_tr::Gen.Trace, steps::Int64)
-    n = length(plan_tr.production_traces)
-    start_node = get_retval(plan_tr).node
-    start_node = setproperties(start_node;
-                               maxsteps = n + steps)
-    extended, _... = Gen.generate(astar_recurse, (start_node, n + 1))
-    extended
+function select_subgoal(horizon::Gen.RecurseTrace)
+    final_step = get_retval(horizon)
+    @unpack heuristics = final_step
+    n = length(heuristics[1]) # subgoals
+    v = fill(-Inf, n)
+    @inbounds for a = 1:length(heuristics)
+        v = max.(v, heuristics[a])
+    end
+    sgi = argmax(v)
+end
+
+function depth(tr::Gen.RecurseTrace)
+    ks = keys(tr.production_traces)
+    maximum(ks)
+end
+
+function get_step(tr::Gen.RecurseTrace, i::Int64)
+    parent_subtrace = tr.production_traces[i]
+    get_retval(parent_subtrace).value
+end
+function get_node(tr::Gen.RecurseTrace, i::Int64)
+    get_step(tr, i).node
+end
+
+function splice_plan(source::Gen.Trace,
+                     origin::Int64, # where to cut the new trace
+                     steps::Int64,
+                     node_data::NamedTuple = NamedTuple())
+
+    n = length(source.production_traces)
+    origin = min(origin, n)
+    maxsteps = origin + steps
+
+    # extract the new start node
+    node = get_node(source, origin)
+    node = setproperties(node;
+                         node_data...,
+                         maxsteps = maxsteps)
+
+    # copy over previously planned choices
+    cm = choicemap()
+    for i = origin:(min(n, maxsteps))
+        addr = (i, Val(:production)) => :action
+        cm[addr] = source[addr]
+    end
+
+    args = (node, origin)
+    new_tr, w = Gen.generate(astar_recurse, args, cm)
+end
+
+function shift_plan(plan_tr::Gen.Trace,
+                    current::Int64,
+                    steps::Int64)
+    n = depth(plan_tr)
+    current = min(current, n)
+    splice_plan(plan_tr, current, steps + 1)
 end
 
 function integrate_update(plan_tr::Gen.Trace,
                           state::Gen.Trace,
                           current::Int64,
                           maxsteps::Int64)
-    # retreive node that will be revisited
-    choices = get_choices(plan_tr)
-    n = length(plan_tr.production_traces)
-    parent_addr = (current - 1, Val(:production))
-    # parent_subtrace = get_submap(choices, parent_addr).trace
-    parent_subtrace = plan_tr.production_traces[current - 1]
-    node = get_retval(parent_subtrace).value.node
-    # update node with new state and adjust horizon size
+
+    # update with new state
+    node_data = (; state = state)
+    # adjust horizon size
+    n = depth(plan_tr)
     k = min(n, current + maxsteps - 1)
-    node = setproperties(node;
-                         state = state,
-                         maxsteps = k)
-    # extract choices from current plan
-    cm = choicemap()
-    prev_w::Float64 = 0.0
-    for t = current:k
-        addr = (t, Val(:production)) => :action
-        cm[addr] = plan_tr[addr]
-        prev_w += Gen.project(plan_tr.production_traces[t],
-                               select(:action))
-    end
+    @show current
+    @show k
+    display(get_choices(plan_tr))
+    # generate from current -> k,
+    # using new local start node
+    # and copying relevant action decisions from `plan_tr`
+    new_tr, nw = splice_plan(plan_tr, current, k, node_data)
+
+    # compute probability of original subplan
     # TODO: project is not implemented for `Recurse`
-    # prev_w = Gen.project(plan_tr, sl)
-    new_tr, nw = Gen.generate(astar_recurse,
-                              (node, current),
-                              cm)
-    nw - prev_w
+    # prev_w = Gen.project(plan_tr, selection)
+    prev_w::Float64 = 0.0
+    for t = current:depth(new_tr)
+        prev_w += Gen.project(plan_tr.production_traces[t],
+                              select(:action))
+    end
+    (new_tr, nw - prev_w)
 end
 
 

@@ -16,7 +16,7 @@ function VGDL.action_step(gs::GameState, actions::Dict{Int64, Int64})
         rule = if haskey(actions, i)
             actionspace(el)[actions[i]]
         else
-            evolve(el, gs)
+            VGDL.evolve(el, gs)
         end
         q = PriorityQueue{Rule, Int64}()
         sync!(q, promise(rule)(i, 0))

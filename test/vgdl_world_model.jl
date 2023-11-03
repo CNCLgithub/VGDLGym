@@ -28,7 +28,20 @@ function test()
                             ws,
                             proc_args)
 
-    p = GreedyPlanner{VGDLWorldModel}()
+    goals = [
+        Goal(AllRef{Butterfly}(), Get()),
+        # Goal(AllRef{Pinecone}(), Count())
+    ]
+    p = TheoryBasedPlanner{VGDLWorldModel}(
+        wm,
+        goals,
+        4,
+        8,
+        3,
+        4,
+        nothing,
+        Goal[]
+    )
 
     agent = GenAgent(wm, tm, q, p)
     agent_idx = 1 # by convention

@@ -150,6 +150,9 @@ function distance_to(info::Info, r::SingularRef{X}
                      ) where {X<:DynamicElement}
     el = retrieve(r, info)
     isnothing(el) && return 0.0
+    # @show el.position
     v = get_vertex(info.state.scene.bounds, el.position)
+    # @show v
+    # @show info.distances[v]
     info.distances[v]
 end

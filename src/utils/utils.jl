@@ -18,6 +18,9 @@ function VGDL.action_step(gs::GameState, actions::Dict{Int64, Int64})
         else
             VGDL.evolve(el, gs)
         end
+        # if i == 1
+        #     @show (i, rule)
+        # end
         q = PriorityQueue{Rule, Int64}()
         sync!(q, promise(rule)(i, 0))
         queues[i] = q
@@ -35,7 +38,7 @@ viz_obs(obs) = display(colorview(RGB, obs))
 #     isnan(sxs) || iszero(sxs) ? fill(1.0/n, n) : exs ./ sxs
 # end
 
-function softmax(x::Array{Float64}; t::Float64 = 1.0)
+function softmax(x::Array{Float64}, t::Float64 = 1.0)
     out = similar(x)
     softmax!(out, x; t = t)
     return out

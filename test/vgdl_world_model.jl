@@ -8,11 +8,11 @@ function test()
     tset = termination_set(G)
     init_state = load_level(G, 1)
     # limit time
-    init_state.max_time = 500
+    init_state.max_time = 100
 
     @assert typeof(init_state.scene.dynamic[1]) <: Player
 
-    noise = 0.2 # noise for graphics
+    noise = 0.1 # noise for graphics
 
     wm, ws = init_world_model(VGDLWorldModel,
                               G,
@@ -36,9 +36,9 @@ function test()
         wm,
         goals,
         4,
-        8,
-        3,
         4,
+        3,
+        5,
         nothing,
         Goal[]
     )

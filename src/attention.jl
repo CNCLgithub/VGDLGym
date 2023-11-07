@@ -42,11 +42,14 @@ end
 
 function select_random_agent(tr::Gen.Trace)
     t, _... = get_args(tr)
-    states = get_retval(tr)
-    state = last(states)
-    nagents = length(state.gstate.scene.dynamic) - 1 # not counting player
-    keys = state.gstate.scene.dynamic.keys
+    choices = get_choices(tr)
+    sub_addr = :kernel => t => :dynamics => :agents
+    #NOTE: retval may return newly spawned agents
+    nagents = length(tr[sub_addr]) - 1 # not counting player
     selected = categorical(Fill(1.0 / nagents, nagents))
-    agent_idx = keys[selected + 1]
-    Gen.select(:kernel => t => :dynamics => :agents => agent_idx => :action)
+    ai = selected + 1 # from 1 -> N (because of Gen.Map)
+    # display(choicemap(get_submap(get_choices(tr), :kernel => t => :dynamics => :agents)))
+    addr = :kernel => t => :dynamics => :agents =>
+        ai => :action
+    Gen.select(addr)
 end

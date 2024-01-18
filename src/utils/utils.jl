@@ -7,7 +7,27 @@ function action_to_idx(agent::VGDL.Agent, action::Type{<:VGDL.Rule})
     findfirst(x -> x == action, actionspace(agent))
 end
 
-function VGDL.action_step(gs::GameState, actions::Dict{Int64, Int64})
+
+function VGDL.resolve(gs::GameState,
+                      r::NoAction)
+    return gs
+end
+function VGDL.resolve(gs::GameState,
+                      r::Rule)
+
+    queues = OrderedDict{Int64, PriorityQueue}()
+    q = PriorityQueue{Rule, Int64}()
+    sync!(q, r)
+    queues[0] = q
+    new_st = VGDL.resolve(queues, gs)
+    # correct for increment in `resolve`
+    new_st.time -= 1
+    return new_st
+end
+
+function VGDL.action_step(gs::GameState,
+                          actions::Dict{Int64, Int64},
+                          )
     queues = OrderedDict{Int64, PriorityQueue}()
     scene = gs.scene
     # action phase
@@ -18,9 +38,6 @@ function VGDL.action_step(gs::GameState, actions::Dict{Int64, Int64})
         else
             VGDL.evolve(el, gs)
         end
-        # if i == 1
-        #     @show (i, rule)
-        # end
         q = PriorityQueue{Rule, Int64}()
         sync!(q, promise(rule)(i, 0))
         queues[i] = q
@@ -28,7 +45,8 @@ function VGDL.action_step(gs::GameState, actions::Dict{Int64, Int64})
     return queues
 end
 
-viz_obs(obs) = display(colorview(RGB, obs))
+render_obs(obs) = colorview(RGB, obs)
+viz_obs(obs) = display(render_obs(obs))
 
 # function softmax(x::Array{Float64}; t::Float64 = 1.0)
 #     x = x .- maximum(x)

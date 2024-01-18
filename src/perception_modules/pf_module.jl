@@ -2,7 +2,8 @@
 
 export AdaptivePF,
     IncPF,
-    IncPerceptionModule
+    IncPerceptionModule,
+    render_world_state
 
 using Gen_Compose: PFChain
 
@@ -56,14 +57,14 @@ end
 
 function IncPerceptionModule(model::Gen.GenerativeFunction,
                              wm::T, init_state::WorldState{T},
-                             proc_args::Tuple,
+                             proc_args::NamedTuple,
                              ) where {T<:WorldModel}
     args = (0, init_state, wm) # t = 0
     # argdiffs: only `t` changes
     argdiffs = (Gen.UnknownChange(), Gen.NoChange(), Gen.NoChange())
     query = IncrementalQuery(model, Gen.choicemap(),
                              args, argdiffs, 1)
-    proc = AdaptivePF(proc_args...)
+    proc = AdaptivePF(;proc_args...)
     chain = PFChain(query, proc)
     IncPerceptionModule{T}(chain)
 end
@@ -92,13 +93,17 @@ function transfer(::MAPTransfer, perception::IncPerceptionModule)
     map_trace = state.traces[map_idx]
 end
 
-function viz_world_state(pm::IncPerceptionModule)
+function render_world_state(pm::IncPerceptionModule)
     _, _, wm = pm.chain.query.args
     gr = graphics(wm)
     traces = Gen.sample_unweighted_traces(pm.chain.state,
                                           length(pm.chain.state.traces))
     f = tr::Gen.Trace -> render(gr, last(get_retval(tr)).gstate)
-    img = mean(map(f, traces))
+    mean(map(f, traces))
+end
+
+function viz_world_state(pm::IncPerceptionModule)
+    img = render_world_state(pm)
     viz_obs(img)
     return nothing
 end

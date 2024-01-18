@@ -1,6 +1,7 @@
 module VGDLGym
 
 using VGDL
+using NearestNeighbors
 using Gen
 using Gen_Compose
 using GenParticleFilters
@@ -64,8 +65,10 @@ end
 function perceive!(agent::GenAgent, st::GameState, action::Int)
     gr = graphics(agent.world_model)
     obs = render(gr, st)
-    cm = Gen.choicemap()
-    cm[:kernel => st.time => :observe] = obs
+    x,y,_ = size(obs)
+    cm = Gen.choicemap(
+        (:kernel => st.time => :observe, obs)
+    )
     println("Time $(st.time)")
     viz_obs(obs)
     # add action index as constraint
@@ -75,7 +78,7 @@ function perceive!(agent::GenAgent, st::GameState, action::Int)
 
     perceive!(agent.perception, cm, st.time)
     viz_world_state(agent.perception)
-    return nothing
+    return obs
 end
 
 function plan!(agent::GenAgent)

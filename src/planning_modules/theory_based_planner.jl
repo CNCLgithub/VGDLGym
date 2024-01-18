@@ -124,12 +124,13 @@ function replan(wm::W, ws::WorldState{<:W},
                 ) where {W <: VGDLWorldModel}
     # initialize world state at current time
     gs = game_state(ws)
+    player = gs.scene.dynamic[1]
     args = (0, ws, wm)
     tr, _ = Gen.generate(vgdl_wm, args)
     # planning node points to current world
     # state and heuristic
     start_node = AStarNode(heuristic,
-                           wm.nactions,
+                           length(actionspace(player)),
                            tr,
                            t,
                            t + max_steps,

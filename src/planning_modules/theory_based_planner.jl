@@ -23,6 +23,32 @@ mutable struct TheoryBasedPlanner{W<:WorldModel} <: PlanningModule{W}
     subgoals::Vector{Goal}
 end
 
+function subgoal_replan(previous::Vector{<:T}, current::Vector{<:T},
+                        percept, ws,
+                        ) where {T<:Goal}
+    d = affordances(ws)
+    isempty(previous) && return 1.0
+    sg_diff = setdiff(current, previous)
+    (isempty(current) || isempty(sg_diff)) && return 0.0
+    prev_hr = consolidate(previous, d)
+    diff_hr = consolidate(sg_diff, d)
+    exp(maximum(diff_hr(percept)) - maximum(prev_hr(percept)))
+end
+
+function prune_subgoals(pl, wm, ws, t, subgoals)
+    d = affordances(ws)
+    heuristic = consolidate(subgoals, d)
+    horizon = replan(wm, ws, heuristic, t,
+                     pl.search_steps)
+    # REVIEW: select more than 1?
+    subgoals = [subgoals[select_subgoal(horizon)]]
+    heuristic = consolidate(subgoals, d)
+    horizon = replan(wm, ws, heuristic, t,
+                     pl.replan_steps)
+
+    (subgoals,  horizon)
+end
+
 function plan!(pl::TheoryBasedPlanner{<:W},
                wm::W,
                percept::Gen.Trace,
@@ -31,15 +57,12 @@ function plan!(pl::TheoryBasedPlanner{<:W},
     ws::WorldState{W} = extract_ws(wm, percept)
     info = Info(wm, ws)
 
-
     (current_t, _, _) = get_args(percept)
     # @show current_t
 
     # re-evaluate subgoals
-    subgoals = pl.subgoals
     new_subgoals::Vector{Goal} =
         reduce(vcat, map(g -> decompose(g, info), pl.goals))
-    sg_diff = intersect(subgoals, new_subgoals)
 
     # remaining length of horizon
     hlen = isnothing(pl.horizon) ?
@@ -47,71 +70,42 @@ function plan!(pl::TheoryBasedPlanner{<:W},
     @show hlen
 
     local horizon::Gen.RecurseTrace, heuristic::Function
-    replanned::Bool = false
-    if length(sg_diff) !== length(subgoals) || hlen < 1
-        # full replan
-        println("Full replan")
-        gs = game_state(ws)
-        d = affordances(gs)
-        subgoals = new_subgoals
-        heuristic = consolidate(subgoals, d)
-        horizon = replan(wm, ws, heuristic,
-                         current_t,
-                         pl.search_steps)
-        # REVIEW: select more than 1?
-        subgoals = [subgoals[select_subgoal(horizon)]]
-        heuristic = consolidate(subgoals, d)
-        horizon = replan(wm, ws, heuristic, current_t,
-                         pl.replan_steps)
-        replanned = true
-    else
-        horizon = pl.horizon
-        heuristic = get_heursitc(pl.horizon)
-        hlen = horizon_length(horizon, current_t)
-    end
+    if hlen < 1
+        println("Horizon empty - replanning...")
+        (subgoals, horizon) =
+            prune_subgoals(pl, wm, ws, current_t, new_subgoals)
 
-    # @show replanned
+    elseif rand() < subgoal_replan(pl.subgoals, new_subgoals,
+                                   percept, ws)
+        println("Switching to new subgoal - replanning...")
+        (subgoals, horizon) =
+            prune_subgoals(pl, wm, ws, current_t, new_subgoals)
 
-    if !replanned && hlen > 1
-        # divergent world state
-        (_, alpha) =
-            integrate_update(horizon,
-                            percept,
-                            current_t,
-                            pl.integration_steps)
+    # horizon defined
+    elseif rand() < integrate_update(pl.horizon,
+                                     percept,
+                                     current_t,
+                                     pl.integration_steps)
+        println("Diverged from horizon - replanning...")
+        (subgoals, horizon) =
+            prune_subgoals(pl, wm, ws, current_t, new_subgoals)
 
-        if rand() > -alpha
-            println("replanning from state divergence")
-            # replan
-            # REVIEW: replan + new subgoal selection?
-            # REVIEW: could extend plan from `integrate_update`
-            gs = game_state(ws)
-            d = affordances(gs)
-            heuristic = consolidate(subgoals, d)
-            horizon = replan(wm, ws, heuristic, current_t,
-                             pl.replan_steps)
-            # REVIEW: select more than 1?
-            subgoals = [subgoals[select_subgoal(horizon)]]
-            heuristic = consolidate(subgoals, d)
-            horizon = replan(wm, ws, heuristic, current_t,
-                             pl.replan_steps)
-            replanned = true
-        end
-    end
-
-    if !replanned && hlen < 3
-        # did not replan for the following reasons:
-        # 1) the horizon is too short and needs to be extended
-        # 2) predictions have not diverged enough
-        # 3) no change in subgoals
-        horizon, _ = shift_plan(horizon, current_t,
+    # TODO: expose api for forward window
+    elseif hlen < 3
+        println("Horizon is short - extending...")
+        horizon, _ = shift_plan(pl.horizon, current_t,
                                 pl.shift_steps)
+        subgoals = pl.subgoals
+    else
+        println("Preserved horizon - not planning.")
+        horizon = pl.horizon
+        subgoals = pl.subgoals
     end
 
     pl.horizon = horizon
     pl.subgoals = subgoals
 
-    ai = planned_action(pl, horizon, current_t)
+    ai = planned_action(pl, current_t)
     # @show ai
     ai
 end
@@ -216,7 +210,8 @@ function integrate_update(plan_tr::Gen.Trace,
         prev_w += Gen.project(plan_tr.production_traces[t],
                               select(:action))
     end
-    (new_tr, nw - prev_w)
+    # (new_tr, nw - prev_w)
+    nw - prev_w
 end
 
 #################################################################################
@@ -272,15 +267,16 @@ function horizon_length(tr::Gen.RecurseTrace, t::Int64)
     depth(tr) - t
 end
 
-function get_heursitc(tr::Gen.RecurseTrace)
+function get_heursitic(tr::Gen.RecurseTrace)
     snode, _ = get_args(tr)
     snode.heuristic
 end
 
-function planned_action(pl::TheoryBasedPlanner{<:W}, tr::Gen.RecurseTrace,
+function planned_action(pl::TheoryBasedPlanner{<:W},
                         t::Int64) where {W<:VGDLWorldModel}
+    tr = pl.horizon
     step = get_step(tr, t)
-    @show step.heuristics
+    # @show step.heuristics
     step.action
 end
 

@@ -46,7 +46,7 @@ function test()
     G = ButterflyGame
     imap = compile_interaction_set(G)
     tset = termination_set(G)
-    init_state = load_level(G, 3)
+    init_state = load_level(G, 2)
     # limit time
     init_state.max_time = 20
 
@@ -92,8 +92,8 @@ function test()
     gym = SoloGym(wm.imap, wm.tvec, init_state, agent,
                   agent_idx)
 
-    # render_gym!(gym)
-    run_gym!(gym)
+    render_gym!(gym)
+    # run_gym!(gym)
 
 
 end

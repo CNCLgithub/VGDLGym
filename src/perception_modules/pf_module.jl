@@ -102,7 +102,7 @@ function render_world_state(pm::IncPerceptionModule)
     mean(map(f, traces))
 end
 
-function viz_world_state(pm::IncPerceptionModule)
+function viz_perception_module(pm::IncPerceptionModule)
     img = render_world_state(pm)
     viz_obs(img)
     return nothing

@@ -69,21 +69,19 @@ function perceive!(agent::GenAgent, st::GameState, action::Int)
     cm = Gen.choicemap(
         (:kernel => st.time => :observe, obs)
     )
-    println("Time $(st.time)")
-    viz_obs(obs)
     # add action index as constraint
     agent_idx = agent.world_model.agent_idx # TODO: getter
     cm[:kernel => st.time => :agent => agent_idx] =
         action
 
     perceive!(agent.perception, cm, st.time)
-    viz_world_state(agent.perception)
     return obs
 end
 
 function plan!(agent::GenAgent)
     @unpack world_model, tm, perception, planning = agent
-    transfer(tm, world_model, perception, planning)
+    action = transfer(tm, world_model, perception, planning)
+    return action
 end
 
 #################################################################################
@@ -120,7 +118,13 @@ function run_gym!(gym::SoloGym)
 
         # update agent's percepts
         # also pass the planned action
-        perceive!(gym.agent, next_state, action)
+        obs = perceive!(gym.agent, next_state, action)
+
+
+        println("Time $(gym.state.time)")
+        viz_obs(obs)
+        viz_perception_module(gym.agent.perception)
+        viz_planning_module(gym.agent.planning)
 
         # update reference to new game state
         gym.state = next_state

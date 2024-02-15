@@ -79,10 +79,10 @@ function test()
     p = TheoryBasedPlanner{VGDLWorldModel}(
         wm,
         goals,
-        4,
-        4,
-        3,
-        5,
+        4, # search steps
+        4, # replan steps
+        3, # percept update steps
+        5, # extend plan steps
         nothing,
         Goal[]
     )
@@ -92,8 +92,8 @@ function test()
     gym = SoloGym(wm.imap, wm.tvec, init_state, agent,
                   agent_idx)
 
-    render_gym!(gym)
-    # run_gym!(gym)
+    # render_gym!(gym)
+    run_gym!(gym)
 
 
 end

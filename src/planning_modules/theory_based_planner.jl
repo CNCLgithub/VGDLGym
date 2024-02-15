@@ -74,6 +74,7 @@ function plan!(pl::TheoryBasedPlanner{<:W},
         println("Horizon empty - replanning...")
         (subgoals, horizon) =
             prune_subgoals(pl, wm, ws, current_t, new_subgoals)
+        println("New horizon length $(horizon_length(horizon, current_t))")
 
     elseif rand() < subgoal_replan(pl.subgoals, new_subgoals,
                                    percept, ws)
@@ -191,14 +192,12 @@ function integrate_update(plan_tr::Gen.Trace,
     # adjust horizon size
     n = depth(plan_tr)
     k = min(n - current, maxsteps)
-    # @show current
-    # @show k
-    # generate from current -> k,
-    # using new local start node
-    # and copying relevant action decisions from `plan_tr`
+    # given new perceived state, determine how well the
+    # current sequence of action works out
     new_tr, nw = splice_plan(plan_tr, current, k, node_data)
 
-    # compute probability of original subplan
+    # compute probability of the current sequence of actions
+    # for the prevous state
     # TODO: project is not implemented for `Recurse`
     # prev_w = Gen.project(plan_tr, selection)
     prev_w::Float64 = 0.0
@@ -221,7 +220,7 @@ end
 function select_subgoal(horizon::Gen.RecurseTrace)
     final_step = get_retval(horizon)
     @unpack heuristics = final_step
-    display(heuristics)
+    # display(heuristics)
     n = length(heuristics[1]) # subgoals
     v = fill(-Inf, n)
     @inbounds for a = 1:length(heuristics)
@@ -264,6 +263,8 @@ function consolidate(sgs::Vector{<:Goal}, agraph)
 end
 
 function horizon_length(tr::Gen.RecurseTrace, t::Int64)
+    ks = keys(tr.production_traces)
+    # @show ks
     depth(tr) - t
 end
 
@@ -350,6 +351,7 @@ end
 end
 
 function production_weight(n::AStarNode, heuristic::Vector{Float64})
+    # @show heuristic
     (n.step < n.maxsteps && !any(iszero, heuristic)) ? 1.0 : 0.0
 end
 
@@ -388,3 +390,31 @@ const astar_recurse = Recurse(astar_production,
                               AStarNode,# U (production to children)
                               AStarStep,# V (production to aggregation)
                               AStarStep) # W (aggregation to parents)
+
+#################################################################################
+# Visualization
+#################################################################################
+
+function get_horizon_state(pl::TheoryBasedPlanner,
+                           horizon::Gen.RecurseTrace,
+                           t::Int64)
+    world_trace = get_step(horizon, t).node.state
+    states = get_retval(world_trace)
+    last(states).gstate
+end
+
+function render_horizon(pl::TheoryBasedPlanner)
+    horizon = pl.horizon
+    steps = collect(keys(horizon.production_traces))
+    states = map(t -> get_horizon_state(pl, pl.horizon, t),
+                 steps)
+
+    gr = graphics(pl.world_model)
+    img = mean(map(st -> render(gr, st), states))
+end
+
+function viz_planning_module(pl::TheoryBasedPlanner)
+    img = render_horizon(pl)
+    viz_obs(img)
+    return nothing
+end

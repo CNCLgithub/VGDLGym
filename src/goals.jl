@@ -14,10 +14,10 @@ export Goal,
     decompose,
     evaluate,
     gradient,
-    Info
+    WorldMap,
+    GoalGradients
 
 using AccessorsExtra: maybe, MaybeOptic
-using VGDL: DynamicElement, StaticElement
 
 abstract type RefType end
 
@@ -77,11 +77,12 @@ function decompose(g::Goal{R,S}, info
 end
 
 #################################################################################
-# Info
+# WorldMap
 #################################################################################
 
-struct Info
-    state::GameState
+struct WorldMap{W<:WorldModel}
+    wm::WorldModel
+    ws::WorldState{W}
     distances
 end
 
@@ -90,7 +91,7 @@ end
 #################################################################################
 
 function evaluate(g::Goal{R,S}, info) where {R<:SingularRef, S<:Get}
-    iszero(gradient)
+    iszero(gradient(g, info))
 end
 
 function gradient(g::Goal{R,S}, info) where {R<:SingularRef, S<:Get}
@@ -122,23 +123,35 @@ function gradient(g::Goal{R,S}, info) where {R<:AllRef, S<:Count}
 end
 
 #################################################################################
+# Calculating goal gradients
+#################################################################################
+
+struct GoalGradients
+    subgoals::Vector{<:Goal}
+    affordances::AbstractGraph
+end
+
+function (gg::GoalGradients)(tr::T) where {T<:Gen.Trace}
+    wm = WorldMap(tr, gg.affordances)
+    n = length(gg.subgoals)
+    results = Vector{Float64}(undef, n)
+    @inbounds for i = 1:n
+        results[i] = gradient(gg.subgoals[i], wm)
+    end
+    results
+end
+
+#################################################################################
 # Helpers
 #################################################################################
 
-ref_prefix(::Type{X}) where {X<:DynamicElement} = (@optic _.state.scene.dynamic)
-ref_prefix(::Type{X}) where {X<:StaticElement} = (@optic _.state.scene.static)
 
 function Accessors.IndexLens(i::CartesianIndex{2})
     IndexLens(Tuple(i))
 end
 
-function retreive_refs(::Type{X}, info::Info) where {X}
-    rpfx = ref_prefix(X)
-    els = rpfx(info)
-    # NOTE: works for vector and Dict
-    map(i -> maybe(opcompose(rpfx, IndexLens(i))),
-        findall(x -> isa(x, X), els))
-end
+function retreive_refs end
+
 
 function get_vertex(ds::Tuple{Int64, Int64}, pos::SVector{2, Int64})
     y,x = pos
@@ -146,13 +159,12 @@ function get_vertex(ds::Tuple{Int64, Int64}, pos::SVector{2, Int64})
     (dy * (x -1)) + y
 end
 
-function distance_to(info::Info, r::SingularRef{X}
-                     ) where {X<:DynamicElement}
+function map_position_to_graph end
+
+
+function distance_to(info::WorldMap, r::SingularRef)
     el = retrieve(r, info)
     isnothing(el) && return 0.0
-    # @show el.position
-    v = get_vertex(info.state.scene.bounds, el.position)
-    # @show v
-    # @show info.distances[v]
+    v = map_position_to_graph(info, el)
     info.distances[v]
 end

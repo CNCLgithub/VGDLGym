@@ -48,7 +48,7 @@ function test()
     tset = termination_set(G)
     init_state = load_level(G, 2)
     # limit time
-    init_state.max_time = 20
+    init_state.max_time = 200
 
     @assert typeof(init_state.scene.dynamic[1]) <: Player
 
@@ -64,13 +64,15 @@ function test()
                               agents,
                               noise)
 
-    tm = map_transfer
 
-    proc_args = (;particles = 100, attention = uniform_attention)
-    q = IncPerceptionModule(vgdl_wm_perceive,
-                            wm,
-                            ws,
-                            proc_args)
+    # proc_args = (;particles = 100, attention = uniform_attention)
+    # q = IncPerceptionModule(vgdl_wm_perceive,
+    #                         wm,
+    #                         ws,
+    #                         proc_args)
+    q = GTPerceptionModule(wm, ws)
+
+    tm = MAPMemory{VGDLWorldModel}()
 
     goals = [
         Goal(AllRef{Butterfly}(), Get()),
@@ -87,7 +89,7 @@ function test()
         Goal[]
     )
 
-    agent = GenAgent(wm, tm, q, p)
+    agent = GenAgent(wm, q, p, tm, no_attention)
     agent_idx = 1 # by convention
     gym = SoloGym(wm.imap, wm.tvec, init_state, agent,
                   agent_idx)

@@ -46,41 +46,50 @@ abstract type AttentionModule end
 include("attention.jl")
 
 abstract type PerceptionModule{T<:WorldModel} end
-abstract type TransferModule end
 abstract type PlanningModule{T<:WorldModel} end
+abstract type MemoryModule{T<:WorldModel} end
 
-include("transfer.jl")
+mutable struct GenAgent{W<:WorldModel,
+                        V<:PerceptionModule{W},
+                        P<:PlanningModule{W},
+                        M<:MemoryModule{W},
+                        A<:AttentionModule
+                        }<: VGDL.Agent
+    world_model::W
+    perception::V
+    planning::P
+    memory::M
+    attention::A
+end
+
+world_model(a::GenAgent) = a.world_model
+agent_idx(a::GenAgent) = agent_idx(world_model(a))
+
+
+include("memory.jl")
 include("perception_modules/perception_modules.jl")
 include("planning_modules/planning_modules.jl")
 
 # Define agents that infer the world
-mutable struct GenAgent{W<:WorldModel} <: VGDL.Agent
-    world_model::W
-    tm::TransferModule
-    perception::PerceptionModule{W}
-    planning::PlanningModule{W}
-end
+# mutable struct GenAgent{W<:WorldModel} <: VGDL.Agent
+#     world_model::W
+#     tm::TransferModule
+#     perception::PerceptionModule{W}
+#     planning::PlanningModule{W}
+# end
 
 
+# TODO: dispatch
 function perceive!(agent::GenAgent, st::GameState, action::Int)
-    gr = graphics(agent.world_model)
-    obs = render(gr, st)
-    x,y,_ = size(obs)
-    cm = Gen.choicemap(
-        (:kernel => st.time => :observe, obs)
-    )
-    # add action index as constraint
-    agent_idx = agent.world_model.agent_idx # TODO: getter
-    cm[:kernel => st.time => :agent => agent_idx] =
-        action
-
-    perceive!(agent.perception, cm, st.time)
+    @unpack perception, attention, world_model = agent
+    obs = perceive!(perception, attention, world_model, st, action)
     return obs
 end
 
 function plan!(agent::GenAgent)
-    @unpack world_model, tm, perception, planning = agent
-    action = transfer(tm, world_model, perception, planning)
+    @unpack world_model, memory, perception, planning = agent
+    plan_in = transfer(memory, perception)
+    action = plan!(planning, world_model, plan_in)
     return action
 end
 
@@ -122,8 +131,12 @@ function run_gym!(gym::SoloGym)
 
 
         println("Time $(gym.state.time)")
+        println("\tWorld State")
         viz_obs(obs)
+        println("\tAgent State")
+        println("\t\tPercept")
         viz_perception_module(gym.agent.perception)
+        println("\t\tHorizon")
         viz_planning_module(gym.agent.planning)
 
         # update reference to new game state

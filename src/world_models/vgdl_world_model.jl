@@ -9,6 +9,7 @@ export VGDLWorldModel,
     init_world_model,
     affordances # TODO: general method
 
+using VGDL: DynamicElement, StaticElement
 #################################################################################
 # World model specification
 #################################################################################
@@ -29,12 +30,20 @@ struct VGDLWorldModel <: WorldModel
 end
 
 graphics(wm::VGDLWorldModel) = wm.graphics
+agent_idx(wm::VGDLWorldModel) = wm.agent_idx
 
 struct VGDLWorldState <: WorldState{VGDLWorldModel}
     gstate::VGDL.GameState
 end
 
+WorldState(wm::VGDLWorldModel) = VGDLWorldState
+WorldState(::Type{VGDLWorldModel}) = VGDLWorldState
+
 game_state(ws::VGDLWorldState) = ws.gstate
+
+function VGDL.render(gr::Graphics, st::VGDLWorldState)
+    VGDL.render(gr, game_state(st))
+end
 
 function init_world_model(::Type{W},
                           ::Type{G},
@@ -63,13 +72,16 @@ function init_world_model(::Type{W},
     wm, ws
 end
 
-function Info(wm::VGDLWorldModel, ws::VGDLWorldState)
+function WorldMap(wm::VGDLWorldModel, ws::VGDLWorldState)
     gs = game_state(ws)
     d = affordances(gs)
-    Info(gs, d)
+    WorldMap{VGDLWorldModel}(wm, ws, d)
 end
 
 
+function affordances(state::VGDLWorldState)
+    affordances(game_state(state))
+end
 function affordances(state::GameState)
     dy, _ = state.scene.bounds
     tiles = state.scene.static
@@ -88,6 +100,10 @@ end
 function extract_ws(wm::VGDLWorldModel, tr::Gen.Trace)
     (t, ws, _) = get_args(tr)
     t == 0 ? ws : last(get_retval(tr))
+end
+
+function get_time(ws::VGDLWorldState)
+    ws.gstate.time
 end
 
 #################################################################################
@@ -295,6 +311,7 @@ end
 #################################################################################
 
 const VGDLObs = Gen.get_trace_type(vgdl_obs)
+const VGDLWorld = Gen.get_trace_type(vgdl_wm)
 const VGDLPerceive = Gen.get_trace_type(vgdl_wm_perceive)
 
 
@@ -371,8 +388,52 @@ function perception_mcmc_kernel(tr::T,
 end
 
 #################################################################################
+# Goal interface
+#################################################################################
+
+ref_prefix(::Type{X}, ::Type{W}) where {X<:DynamicElement, W<:VGDLWorldModel} =
+    (@optic _.scene.dynamic)
+ref_prefix(::Type{X}, ::Type{W}) where {X<:StaticElement, W<:VGDLWorldModel} =
+    (@optic _.scene.static)
+
+function retreive_refs(::Type{X}, info::WorldMap{W}
+                       ) where {W<:VGDLWorldModel, X}
+    rpfx = ref_prefix(X, W)
+    els = rpfx(game_state(info.ws))
+    # NOTE: works for vector and Dict
+    map(i -> maybe(opcompose(rpfx, IndexLens(i))),
+        findall(x -> isa(x, X), els))
+end
+
+function map_position_to_graph(info::WorldMap{W}, el::X
+                               ) where {W<:VGDLWorldModel,
+                                        X<:DynamicElement}
+    get_vertex(game_state(info.ws).scene.bounds, el.position)
+end
+
+# function extract_ws(wm::VGDLWorldModel, tr::Gen.Trace)
+#     (t, ws, _) = get_args(tr)
+#     t == 0 ? ws : last(get_retval(tr))
+# end
+
+function WorldMap(tr::Union{VGDLPerceive, VGDLWorld}, affordances)
+    wm = last(get_args(tr))
+    ws = world_state(tr)
+    st = game_state(ws)
+    agent = st.scene.dynamic[wm.agent_idx]
+    lpos = get_vertex(st.scene.bounds, agent.position)
+    d = gdistances(affordances, lpos)
+    WorldMap(wm, ws, d)
+end
+
+#################################################################################
 # helpers
 #################################################################################
+
+function world_state(tr::Union{VGDLPerceive, VGDLWorld})
+    (t, ws, _) = get_args(tr)
+    t == 0 ? ws : last(get_retval(tr))
+end
 
 function predict(gr::VGDL.PixelGraphics, state::GameState)
     img = render(gr, state)

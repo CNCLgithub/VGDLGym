@@ -10,7 +10,7 @@ using Gen_Compose: PFChain
 @with_kw struct AdaptivePF <: Gen_Compose.AbstractParticleFilter
     particles::Int = 1
     ess::Real = particles * 0.5
-    attention::AttentionModule
+    # attention::AttentionModule
 end
 
 function Gen_Compose.PFChain(q::Q,
@@ -20,11 +20,13 @@ function Gen_Compose.PFChain(q::Q,
      P<:AdaptivePF}
 
     state = Gen_Compose.initialize_procedure(p, q)
-    aux = AdaptiveComputation(p.attention)
+    # aux = AdaptiveComputation(p.attention)
+    aux = EmptyAuxState()
     return PFChain{Q, P}(q, p, state, aux, i, typemax(i))
 end
 
-function Gen_Compose.step!(chain::PFChain{<:IncrementalQuery, <:AdaptivePF})
+function Gen_Compose.step!(chain::PFChain{<:IncrementalQuery, <:AdaptivePF},
+                           attention::AttentionModule)
     @unpack query, proc, state, step = chain
     @unpack args, argdiffs, constraints = query
     # Resample before moving on...
@@ -32,7 +34,7 @@ function Gen_Compose.step!(chain::PFChain{<:IncrementalQuery, <:AdaptivePF})
     # update the state of the particles
     Gen.particle_filter_step!(state, args, argdiffs,
                               constraints)
-    adaptive_compute!(chain, proc.attention)
+    adaptive_compute!(chain, attention)
     return nothing
 end
 
@@ -70,23 +72,36 @@ function IncPerceptionModule(model::Gen.GenerativeFunction,
 end
 
 
-function perceive!(pm::IncPerceptionModule, cm::Gen.ChoiceMap,
-                   time::Int)
+function perceive!(pm::IncPerceptionModule{W},
+                   am::AttentionModule,
+                   wm::W,
+                   st::GameState,
+                   action::Int64) where {W<:WorldModel}
+
+    gr = graphics(wm)
+    obs = render(gr, st)
+    ai = agent_idx(wm)
+    cm = Gen.choicemap(
+        (:kernel => st.time => :observe, obs),
+        # add action index as constraint
+        (:kernel => st.time => :agent => ai, action)
+    )
+
     # update chain with new constraints
     chain = pm.chain
-    new_args = (time,)
+    new_args = (st.time,)
     chain.query = increment(chain.query, cm, new_args)
 
     # run inference procedure
-    step!(chain)
+    step!(chain, am)
     chain.step += 1
 
     # update reference in perception module
     pm.chain = chain
-    return nothing
+    return obs
 end
 
-function transfer(::MAPTransfer, perception::IncPerceptionModule)
+function transfer(::MAPMemory, perception::IncPerceptionModule)
     @unpack chain  = perception
     @unpack state = chain
     map_idx = argmax(state.log_weights)

@@ -35,7 +35,6 @@ end
 function adaptive_compute!(c::InferenceChain, ::UniformAttention)
     @unpack proc, query, state = c
     kern = tr::Gen.Trace -> perception_mcmc_kernel(tr, 3, 5)
-    (t, _, _) = query.args
     pf_move_reweight!(state, kern)
     return nothing
 end

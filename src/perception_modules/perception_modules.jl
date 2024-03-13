@@ -20,4 +20,5 @@ function increment(q::IncrementalQuery, cm::Gen.ChoiceMap,
                   args = args)
 end
 
+include("gt_perception.jl")
 include("pf_module.jl")

@@ -54,11 +54,11 @@ function plan!(pl::TheoryBasedPlanner{<:W},
                percept::Gen.Trace,
                ) where {W <: WorldModel}
 
-    ws::WorldState{W} = extract_ws(wm, percept)
-    info = Info(wm, ws)
-
-    (current_t, _, _) = get_args(percept)
+    ws::WorldState{W} = world_state(percept)
+    current_t = get_time(ws)
     # @show current_t
+    info = WorldMap(wm, ws)
+
 
     # re-evaluate subgoals
     new_subgoals::Vector{Goal} =
@@ -243,27 +243,13 @@ function get_node(tr::Gen.RecurseTrace, i::Int64)
     last(get_args(subtrace))
 end
 
+
 function consolidate(sgs::Vector{<:Goal}, agraph)
-    n = length(sgs)
-    # REVIEW: convert to struct instead of anon func?
-    tr::Gen.Trace -> begin
-        _, _, wm = get_args(tr)
-        st = game_state(last(get_retval(tr)))
-        agent = st.scene.dynamic[wm.agent_idx]
-        dy, dx = st.scene.bounds
-        lpos = get_vertex(st.scene.bounds, agent.position)
-        d = gdistances(agraph, lpos)
-        info = Info(st, d)
-        results = Vector{Float64}(undef, n)
-        @inbounds for i = 1:n
-            results[i] = gradient(sgs[i], info)
-        end
-        results
-    end
+    GoalGradients(sgs, agraph)
 end
 
 function horizon_length(tr::Gen.RecurseTrace, t::Int64)
-    ks = keys(tr.production_traces)
+    # ks = keys(tr.production_traces)
     # @show ks
     depth(tr) - t
 end
@@ -287,7 +273,7 @@ end
 
 struct AStarNode
     "(state) -> [value]"
-    heuristic::Function
+    heuristic::GoalGradients
     "Number of actions the agent can take"
     nactions::Int64
     "Current predicted world state"

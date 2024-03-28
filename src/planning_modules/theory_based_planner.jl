@@ -50,15 +50,15 @@ function prune_subgoals(pl, wm, ws, t, subgoals)
 end
 
 function plan!(pl::TheoryBasedPlanner{<:W},
+               attention::AttentionModule,
                wm::W,
                percept::Gen.Trace,
                ) where {W <: WorldModel}
 
-    ws::WorldState{W} = world_state(percept)
-    current_t = get_time(ws)
-    # @show current_t
-    info = WorldMap(wm, ws)
+    ws = world_state(percept)
 
+    current_t = get_time(ws)
+    info = WorldMap(wm, ws)
 
     # re-evaluate subgoals
     new_subgoals::Vector{Goal} =
@@ -103,12 +103,15 @@ function plan!(pl::TheoryBasedPlanner{<:W},
         subgoals = pl.subgoals
     end
 
+    # update planner state
     pl.horizon = horizon
     pl.subgoals = subgoals
 
-    ai = planned_action(pl, current_t)
-    # @show ai
-    ai
+    # update delta pi
+    map_gradients!(attention, pl, current_t)
+
+    # extract plan
+    planned_action(pl, current_t)
 end
 
 
@@ -243,7 +246,6 @@ function get_node(tr::Gen.RecurseTrace, i::Int64)
     last(get_args(subtrace))
 end
 
-
 function consolidate(sgs::Vector{<:Goal}, agraph)
     GoalGradients(sgs, agraph)
 end
@@ -254,17 +256,46 @@ function horizon_length(tr::Gen.RecurseTrace, t::Int64)
     depth(tr) - t
 end
 
-function get_heursitic(tr::Gen.RecurseTrace)
-    snode, _ = get_args(tr)
-    snode.heuristic
-end
 
-function planned_action(pl::TheoryBasedPlanner{<:W},
-                        t::Int64) where {W<:VGDLWorldModel}
+function planned_action(pl::TheoryBasedPlanner, t::Int64)
     tr = pl.horizon
     step = get_step(tr, t)
     # @show step.heuristics
     step.action
+end
+
+function get_heursitic(tr::Gen.RecurseTrace)
+    snode, _ = get_args(tr)
+    snode.heuristic # `GoalGradient` function
+end
+
+function get_gradient_values(tr::Gen.RecurseTrace, t::Int64)
+    step = get_step(tr, t)
+    step.heuristics # gradient values
+end
+
+function map_gradients!(attention,
+                        pl::TheoryBasedPlanner{<:W},
+                        current_t::Int64
+                        ) where {W<:VGDLWorldModel}
+    @unpack horizon = pl
+    # get subgoals + gradients for time t
+    hstep = get_step(horizon, current_t)
+    action = hstep.action
+    values = hstep.heuristics[action]
+    goal_gradients = get_heursitic(horizon)
+    sub_goals = goal_gradients.subgoals
+    wm = WorldMap(hstep.node.state, goal_gradients.affordances)
+    n = length(sub_goals)
+    # project each subgoal's gradient to world map
+    for i = 1:n
+        sg = sub_goals[i]
+        idx = project_ref(reference(sg), wm)
+        v = values[i]
+        write_delta_pi!(attention, idx, v)
+    end
+
+    return nothing
 end
 
 #################################################################################
@@ -385,22 +416,27 @@ function get_horizon_state(pl::TheoryBasedPlanner,
                            horizon::Gen.RecurseTrace,
                            t::Int64)
     world_trace = get_step(horizon, t).node.state
-    states = get_retval(world_trace)
-    last(states).gstate
+    world_state(world_trace)
 end
 
 function render_horizon(pl::TheoryBasedPlanner)
     horizon = pl.horizon
+    # display(get_choices(horizon))
     steps = collect(keys(horizon.production_traces))
     states = map(t -> get_horizon_state(pl, pl.horizon, t),
                  steps)
 
+    agent = get_player(pl.world_model, first(states))
     gr = graphics(pl.world_model)
-    img = mean(map(st -> render(gr, st), states))
+    mean(map(st -> render(gr, st), states))
 end
 
-function viz_planning_module(pl::TheoryBasedPlanner)
+function viz_planning_module(pl::TheoryBasedPlanner,
+                             path::String="")
     img = render_horizon(pl)
+    if path != ""
+        save(path, repeat(render_obs(img), inner = (10,10)))
+    end
     viz_obs(img)
     return nothing
 end

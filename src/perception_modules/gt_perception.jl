@@ -30,8 +30,12 @@ function render_world_state(pm::GTPerceptionModule)
     render(gr, pm.state)
 end
 
-function viz_perception_module(pm::GTPerceptionModule)
+function viz_perception_module(pm::GTPerceptionModule,
+                               path::String="")
     img = render_world_state(pm)
+    if path != ""
+        save(path, repeat(render_obs(img), inner = (10,10)))
+    end
     viz_obs(img)
     return nothing
 end

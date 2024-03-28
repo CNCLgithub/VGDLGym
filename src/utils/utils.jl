@@ -2,6 +2,10 @@ using LinearAlgebra
 using Colors
 using ImageCore
 using ImageInTerminal
+using ImageIO
+using FileIO
+
+const loghalf = log(0.5)
 
 function action_to_idx(agent::VGDL.Agent, action::Type{<:VGDL.Rule})
     findfirst(x -> x == action, actionspace(agent))

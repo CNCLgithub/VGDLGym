@@ -78,15 +78,17 @@ function perceive!(pm::IncPerceptionModule{W},
                    st::GameState,
                    action::Int64) where {W<:WorldModel}
 
+    # Render game state to observation model
     gr = graphics(wm)
     obs = render(gr, st)
     ai = agent_idx(wm)
+    # write obs and planned action to choicemap
     cm = Gen.choicemap(
         (:kernel => st.time => :observe, obs),
         # add action index as constraint
-        (:kernel => st.time => :agent => ai, action)
+        (:kernel => st.time => :dynamics => :agents => ai => :action,
+         action)
     )
-
     # update chain with new constraints
     chain = pm.chain
     new_args = (st.time,)

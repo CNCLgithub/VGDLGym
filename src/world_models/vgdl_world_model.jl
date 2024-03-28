@@ -119,7 +119,7 @@ VGDL.lens(r::OrphanBirth) = x -> x
 VGDL.transform(r::OrphanBirth{T}) where {T} = x -> T(;r.args...)
 # REVIEW: need promise?
 
-@gen (static) function no_magic(s::VGDLWorldState, wm::VGDLWorldModel,
+@gen function no_magic(s::VGDLWorldState, wm::VGDLWorldModel,
                                 loci::Int64)
     r::VGDL.Rule = VGDL.no_action
     return r
@@ -131,7 +131,7 @@ function retile_weights(s::VGDLWorldState, wm::VGDLWorldModel)
     Fill(1.0 / n, n)
 end
 
-@gen (static) function vgdl_retile(s::VGDLWorldState, wm::VGDLWorldModel,
+@gen function vgdl_retile(s::VGDLWorldState, wm::VGDLWorldModel,
                                    loci::Int64)
     ws = retile_weights(s, wm)
     tidx = @trace(categorical(ws), :tile_type)
@@ -158,7 +158,7 @@ function birth_at(s::VGDLWorldState, wm::VGDLWorldModel, did::Int64, lid::Int64)
     OrphanBirth{T}((; position=pos))
 end
 
-@gen (static) function vgdl_birth(s::VGDLWorldState, wm::VGDLWorldModel,
+@gen function vgdl_birth(s::VGDLWorldState, wm::VGDLWorldModel,
                                   loci::Int64)
     obj_ws = birth_weights(s, wm)
     type_id = @trace(categorical(obj_ws), :object_type)
@@ -188,7 +188,7 @@ function VGDL.pushtoqueue!(r::Dies, ::Dict, ::Dict, d::Dict)
 end
 
 
-@gen (static) function vgdl_death(s::VGDLWorldState, wm::VGDLWorldModel,
+@gen function vgdl_death(s::VGDLWorldState, wm::VGDLWorldModel,
                                   loci::Int64)
     r::VGDL.Rule = death_at(wm, s, loci)
     return r
@@ -203,7 +203,7 @@ function loci_weights(s::VGDLWorldState, wm::VGDLWorldModel)
     @inbounds for i = 1:length(scene.static)
        # HACK: assuming `Butterfly` game
        # TODO: implement `isnavigable`
-       loc_weights[i] = Int64(scene.static[i] != VGDL.obstacle)
+       loc_weights[i] = Int64(scene.static[i] == VGDL.ground)
     end
     rmul!(loc_weights, 1.0 / sum(loc_weights))
     return loc_weights
@@ -217,13 +217,20 @@ function magic_weights(s::VGDLWorldState, wm::VGDLWorldModel, loci::Int64)
         # none | death
         ws[1] = ws[3] = 0.5
     else
-        # none | birth | retile
-        ws[1] = ws[2] = ws[4] = 1.0 / 3.0
+        scene = game_state(s).scene
+        # HACK: only works for Butterfly?
+        if scene.static[loci] == VGDL.obstacle
+            # none | birth | retile
+            ws[1] = ws[2] = 0.5
+        else
+            # none | birth | retile
+            ws[1] = ws[2] = ws[4] = 1.0 / 3.0
+        end
     end
     return ws
 end
 
-@gen (static) function vgdl_magic(s::VGDLWorldState, wm::VGDLWorldModel)
+@gen function vgdl_magic(s::VGDLWorldState, wm::VGDLWorldModel)
     # something magical may happen at a location
     lws = loci_weights(s, wm)
     loci = @trace(categorical(lws), :loci)
@@ -280,8 +287,7 @@ const vgdl_render_map = Gen.Map(vgdl_render)
 @gen (static) function vgdl_obs(t::Int,
                                 prev::VGDLWorldState,
                                 wm::VGDLWorldModel)
-    # birth/death
-    temp_state = @trace(vgdl_magic(prev, wm), :birthdeath)
+    temp_state = @trace(vgdl_magic(prev, wm), :magic)
     new_state = @trace(vgdl_dynamics(t, temp_state, wm), :dynamics)
     # predict observation
     pred_mu = predict(wm.graphics, new_state.gstate)
@@ -334,17 +340,30 @@ end
 
 Gen.is_involution!(magic_involution)
 
+function select_agent(tr::T, ai::Int64) where {T<:VGDLPerceive}
+    t, _... = get_args(tr)
+    addr = :kernel => t => :dynamics => :agents =>
+        ai => :action
+    Gen.select(addr)
+end
+
+
+function select_agent_safe(tr::T, ai::Int64) where {T<:VGDLPerceive}
+    t, _... = get_args(tr)
+    sub_addr = :kernel => t => :dynamics => :agents
+    nagents = length(tr[sub_addr])
+    addr = :kernel => t => :dynamics => :agents =>
+        ai => :action
+    length(nagents) < ai ? Gen.select() : Gen.select(addr)
+end
+
 function select_random_agent(tr::T) where {T<:VGDLPerceive}
     t, _... = get_args(tr)
-    # choices = get_choices(tr)
     sub_addr = :kernel => t => :dynamics => :agents
-    #NOTE: retval may return newly spawned agents
     nagents = length(tr[sub_addr]) - 1 # not counting player
     selected = categorical(Fill(1.0 / nagents, nagents))
     ai = selected + 1 # from 1 -> N (because of Gen.Map)
-    # display(choicemap(get_submap(get_choices(tr), :kernel => t => :dynamics => :agents)))
-    addr = :kernel => t => :dynamics => :agents =>
-        ai => :action
+    select_agent(tr, ai)
     Gen.select(addr)
 end
 
@@ -387,6 +406,46 @@ function perception_mcmc_kernel(tr::T,
     return (new_tr, w)
 end
 
+
+function agent_kernel(tr::T,
+                      importance::Vector{Float64},
+                      ) where {T<:VGDLPerceive}
+
+
+    magic_translator = SymmetricTraceTranslator(propose_magic,
+                                                (importance,),
+                                                magic_involution)
+
+    t = first(get_args(tr))
+    # Magic block
+    s = select(
+        :kernel => t => :magic => :magic_idx,
+        :kernel => t => :magic => :spell,
+    )
+    _tr, w1 = magic_translator(tr, check=false)
+    _tr, w2 = move_reweight(_tr, s)
+    if rand() < (w1 + w2)
+        idx = get_value(get_choices(_tr), :kernel => t => :magic => :magic_idx)
+        @show idx
+        return (_tr, idx, w1 + w2)
+    end
+
+    wm = get_args(tr)[3]
+    s = world_state(tr)
+    # sample an index
+    idx = categorical(importance)
+    agent_idxs = get_from_loci(wm, s, idx, 2)
+    # don't update player
+    agent_idxs = filter(x -> x != 1, agent_idxs)
+    if isempty(agent_idxs)
+        return (tr, 0, 0.0)
+    end
+    agent_idx = first(agent_idxs)
+    s = select_agent_safe(tr, agent_idx)
+    new_tr, w = move_reweight(tr, s)
+    return (new_tr, idx, w)
+end
+
 #################################################################################
 # Goal interface
 #################################################################################
@@ -405,9 +464,11 @@ function retreive_refs(::Type{X}, info::WorldMap{W}
         findall(x -> isa(x, X), els))
 end
 
-function map_position_to_graph(info::WorldMap{W}, el::X
-                               ) where {W<:VGDLWorldModel,
-                                        X<:DynamicElement}
+function map_position_to_graph(
+    el::X,
+    info::WorldMap{W}
+    ) where {W<:VGDLWorldModel,
+             X<:DynamicElement}
     get_vertex(game_state(info.ws).scene.bounds, el.position)
 end
 
@@ -416,11 +477,14 @@ end
 #     t == 0 ? ws : last(get_retval(tr))
 # end
 
+get_player(wm::VGDLWorldModel, ws::VGDLWorldState) =
+    game_state(ws).scene.dynamic[wm.agent_idx]
+
 function WorldMap(tr::Union{VGDLPerceive, VGDLWorld}, affordances)
     wm = last(get_args(tr))
     ws = world_state(tr)
     st = game_state(ws)
-    agent = st.scene.dynamic[wm.agent_idx]
+    agent = get_player(wm, ws)
     lpos = get_vertex(st.scene.bounds, agent.position)
     d = gdistances(affordances, lpos)
     WorldMap(wm, ws, d)
@@ -446,24 +510,23 @@ function predict(gr::VGDL.PixelGraphics, state::GameState)
 end
 
 function death_at(wm::VGDLWorldModel, s::VGDLWorldState, loci::Int64)
-    cind = loci_to_coord(wm, s, loci)
-    pos = SVector{2, Int64}(cind.I)
-    tree = s.gstate.scene.kdtree
-    idxs = inrange(tree, pos, 0)
+    idxs = get_from_loci(wm, s, loci)
     isempty(idxs) && return VGDL.no_action
     idx = first(idxs)
     # don't kill the player
-    player = s.gstate.scene.dynamic[1]
-    pos == VGDL.position(player) &&  return VGDL.no_action
-    Dies(idx)
+    idx == 1 ? VGDL.no_action : Dies(idx)
 end
 
 function has_agent(s::VGDLWorldState, wm::VGDLWorldModel, loci::Int64)
+    isempty(get_from_loci(wm, s , loci))
+end
+
+function get_from_loci(wm::VGDLWorldModel, s::VGDLWorldState, loci::Int64,
+                       radius::Int64 = 0)
     cind = loci_to_coord(wm, s, loci)
     pos = SVector{2, Int64}(cind.I)
     tree = s.gstate.scene.kdtree
-    idxs = inrange(tree, pos, 0)
-    !isempty(idxs)
+    inrange(tree, pos, radius)
 end
 
 

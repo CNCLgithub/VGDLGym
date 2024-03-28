@@ -34,7 +34,8 @@ struct SingularRef{X} <: RefType
     l::LensUnion
 end
 
-retrieve(r::SingularRef, info) = r.l(info)
+# REVIEW: generalize access to `WorldMap`
+retrieve(r::SingularRef, info) = r.l(world_state(info))
 
 abstract type BroadcastRef <: RefType end
 
@@ -81,10 +82,13 @@ end
 #################################################################################
 
 struct WorldMap{W<:WorldModel}
-    wm::WorldModel
+    wm::W
     ws::WorldState{W}
     distances
 end
+
+# HACK: only works for `VGDLWorldState`
+world_state(wm::WorldMap) = game_state(wm.ws)
 
 #################################################################################
 # Get
@@ -95,8 +99,13 @@ function evaluate(g::Goal{R,S}, info) where {R<:SingularRef, S<:Get}
 end
 
 function gradient(g::Goal{R,S}, info) where {R<:SingularRef, S<:Get}
-    d = distance_to(info, reference(g))
+    d = distance_to(reference(g), info)
     -d
+end
+
+function project_ref(r::SingularRef, info)
+    el = retrieve(r, info)
+    isnothing(el) ? 0 : map_position_to_graph(el, info)
 end
 
 # function evaluate(g::Goal{R,S}, info) where {R<:AllRef, S<:Get}
@@ -162,9 +171,7 @@ end
 function map_position_to_graph end
 
 
-function distance_to(info::WorldMap, r::SingularRef)
-    el = retrieve(r, info)
-    isnothing(el) && return 0.0
-    v = map_position_to_graph(info, el)
-    info.distances[v]
+function distance_to(r::SingularRef, info::WorldMap)
+    v = project_ref(r, info)
+    get(info.distances, v, 0)
 end

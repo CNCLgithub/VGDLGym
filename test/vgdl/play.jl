@@ -1,7 +1,8 @@
 using VGDL
 using VGDLGym
-using VGDLGym: render_world_state, render_obs, action_step,
-    plan!, perceive!
+using VGDLGym: viz_obs, action_step,
+    plan!, perceive!, viz_perception_module,
+    viz_planning_module, render_obs
 using ImageIO
 using FileIO
 
@@ -26,15 +27,20 @@ function render_gym!(gym)
         obs =
             perceive!(gym.agent, next_state, action)
 
-        obs_img = render_obs(obs)
-        state_img = render_obs(render_world_state(gym.agent.perception))
 
-        @show size(obs_img)
-        @show size(state_img)
+        println("Time $(gym.state.time)")
+        println("\tWorld State")
+
+        viz_obs(obs)
         save("$(path)/gt_$(gym.state.time).png",
-             repeat(obs_img, inner = (10,10)))
-        save("$(path)/state_$(gym.state.time).png",
-             repeat(state_img, inner = (10,10)))
+             repeat(render_obs(obs), inner = (10,10)))
+        println("\tAgent State")
+        println("\t\tPercept")
+        viz_perception_module(gym.agent.perception,
+                              "$(path)/percept_$(gym.state.time).png")
+        println("\t\tHorizon")
+        viz_planning_module(gym.agent.planning,
+                            "$(path)/horizon_$(gym.state.time).png")
 
         # update reference to new game state
         gym.state = next_state
@@ -48,7 +54,7 @@ function test()
     tset = termination_set(G)
     init_state = load_level(G, 2)
     # limit time
-    init_state.max_time = 200
+    init_state.max_time = 100
 
     @assert typeof(init_state.scene.dynamic[1]) <: Player
 
@@ -65,12 +71,12 @@ function test()
                               noise)
 
 
-    # proc_args = (;particles = 100, attention = uniform_attention)
-    # q = IncPerceptionModule(vgdl_wm_perceive,
-    #                         wm,
-    #                         ws,
-    #                         proc_args)
-    q = GTPerceptionModule(wm, ws)
+    proc_args = (;particles = 20)
+    q = IncPerceptionModule(vgdl_wm_perceive,
+                            wm,
+                            ws,
+                            proc_args)
+    # q = GTPerceptionModule(wm, ws)
 
     tm = MAPMemory{VGDLWorldModel}()
 
@@ -81,15 +87,17 @@ function test()
     p = TheoryBasedPlanner{VGDLWorldModel}(
         wm,
         goals,
-        4, # search steps
-        4, # replan steps
+        5, # search steps
+        10, # replan steps
         3, # percept update steps
-        5, # extend plan steps
+        7, # extend plan steps
         nothing,
-        Goal[]
+        Goal[],
     )
 
-    agent = GenAgent(wm, q, p, tm, no_attention)
+    att = FactorizedAttention(wm, ws)
+
+    agent = GenAgent(wm, q, p, tm, att)
     agent_idx = 1 # by convention
     gym = SoloGym(wm.imap, wm.tvec, init_state, agent,
                   agent_idx)

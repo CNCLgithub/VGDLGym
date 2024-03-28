@@ -43,7 +43,7 @@ include("goals.jl")
 include("world_models/world_models.jl")
 
 abstract type AttentionModule end
-include("attention.jl")
+include("attention/attention.jl")
 
 abstract type PerceptionModule{T<:WorldModel} end
 abstract type PlanningModule{T<:WorldModel} end
@@ -87,9 +87,10 @@ function perceive!(agent::GenAgent, st::GameState, action::Int)
 end
 
 function plan!(agent::GenAgent)
-    @unpack world_model, memory, perception, planning = agent
+    @unpack (world_model, memory, perception, planning,
+             attention) = agent
     plan_in = transfer(memory, perception)
-    action = plan!(planning, world_model, plan_in)
+    action = plan!(planning, attention, world_model, plan_in)
     return action
 end
 
@@ -113,12 +114,10 @@ end
 function run_gym!(gym::SoloGym)
 
     agent_idx = gym.agent_idx
-    action = 0 # not used in first loop
     while !isfinished(gym.state, gym.tvec)
 
         # plan next action
         action = plan!(gym.agent)
-
         # receive agent's action and generate actions for NPCs
         queues =
             action_step(gym.state, Dict(agent_idx => action))
@@ -129,8 +128,8 @@ function run_gym!(gym::SoloGym)
         # also pass the planned action
         obs = perceive!(gym.agent, next_state, action)
 
-
-        println("Time $(gym.state.time)")
+        println("Time $(next_state.time)")
+        # println("Player position: $(next_state.scene.dynamic[1].position)")
         println("\tWorld State")
         viz_obs(obs)
         println("\tAgent State")

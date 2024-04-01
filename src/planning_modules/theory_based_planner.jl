@@ -35,16 +35,23 @@ function subgoal_replan(previous::Vector{<:T}, current::Vector{<:T},
     exp(maximum(diff_hr(percept)) - maximum(prev_hr(percept)))
 end
 
-function prune_subgoals(pl, wm, ws, t, subgoals)
+function prune_subgoals(attention, pl, wm, ws, t, subgoals)
     d = affordances(ws)
     heuristic = consolidate(subgoals, d)
     horizon = replan(wm, ws, heuristic, t,
                      pl.search_steps)
+
+
+    # update delta pi
+    # clear_delta_pi!(attention)
+    map_gradients!(attention, horizon, t)
     # REVIEW: select more than 1?
     subgoals = [subgoals[select_subgoal(horizon)]]
     heuristic = consolidate(subgoals, d)
     horizon = replan(wm, ws, heuristic, t,
                      pl.replan_steps)
+
+    map_gradients!(attention, horizon, t)
 
     (subgoals,  horizon)
 end
@@ -64,6 +71,8 @@ function plan!(pl::TheoryBasedPlanner{<:W},
     new_subgoals::Vector{Goal} =
         reduce(vcat, map(g -> decompose(g, info), pl.goals))
 
+    @show length(new_subgoals)
+
     # remaining length of horizon
     hlen = isnothing(pl.horizon) ?
         0 : horizon_length(pl.horizon, current_t)
@@ -73,14 +82,14 @@ function plan!(pl::TheoryBasedPlanner{<:W},
     if hlen < 1
         println("Horizon empty - replanning...")
         (subgoals, horizon) =
-            prune_subgoals(pl, wm, ws, current_t, new_subgoals)
+            prune_subgoals(attention, pl, wm, ws, current_t, new_subgoals)
         println("New horizon length $(horizon_length(horizon, current_t))")
 
     elseif rand() < subgoal_replan(pl.subgoals, new_subgoals,
                                    percept, ws)
         println("Switching to new subgoal - replanning...")
         (subgoals, horizon) =
-            prune_subgoals(pl, wm, ws, current_t, new_subgoals)
+            prune_subgoals(attention, pl, wm, ws, current_t, new_subgoals)
 
     # horizon defined
     elseif rand() < integrate_update(pl.horizon,
@@ -89,13 +98,14 @@ function plan!(pl::TheoryBasedPlanner{<:W},
                                      pl.integration_steps)
         println("Diverged from horizon - replanning...")
         (subgoals, horizon) =
-            prune_subgoals(pl, wm, ws, current_t, new_subgoals)
+            prune_subgoals(attention, pl, wm, ws, current_t, new_subgoals)
 
     # TODO: expose api for forward window
     elseif hlen < 3
         println("Horizon is short - extending...")
         horizon, _ = shift_plan(pl.horizon, current_t,
                                 pl.shift_steps)
+        map_gradients!(attention, horizon, current_t)
         subgoals = pl.subgoals
     else
         println("Preserved horizon - not planning.")
@@ -107,8 +117,6 @@ function plan!(pl::TheoryBasedPlanner{<:W},
     pl.horizon = horizon
     pl.subgoals = subgoals
 
-    # update delta pi
-    map_gradients!(attention, pl, current_t)
 
     # extract plan
     planned_action(pl, current_t)
@@ -275,10 +283,11 @@ function get_gradient_values(tr::Gen.RecurseTrace, t::Int64)
 end
 
 function map_gradients!(attention,
-                        pl::TheoryBasedPlanner{<:W},
+                        horizon,
+                        # pl::TheoryBasedPlanner{<:W},
                         current_t::Int64
-                        ) where {W<:VGDLWorldModel}
-    @unpack horizon = pl
+                        ) #where {W<:VGDLWorldModel}
+    # @unpack horizon = pl
     # get subgoals + gradients for time t
     hstep = get_step(horizon, current_t)
     action = hstep.action
@@ -431,9 +440,10 @@ function render_horizon(pl::TheoryBasedPlanner)
     mean(map(st -> render(gr, st), states))
 end
 
-function viz_planning_module(pl::TheoryBasedPlanner,
-                             path::String="")
-    img = render_horizon(pl)
+function viz_planning_module(agent::GenAgent{W,V,P,M,A},
+                             path::String="") where {P<:TheoryBasedPlanner,
+                                                     W, V, M, A}
+    img = render_horizon(agent.planning)
     if path != ""
         save(path, repeat(render_obs(img), inner = (10,10)))
     end

@@ -134,9 +134,9 @@ function run_gym!(gym::SoloGym)
         viz_obs(obs)
         println("\tAgent State")
         println("\t\tPercept")
-        viz_perception_module(gym.agent.perception)
+        viz_perception_module(gym.agent)
         println("\t\tHorizon")
-        viz_planning_module(gym.agent.planning)
+        viz_planning_module(gym.agent)
 
         # update reference to new game state
         gym.state = next_state

@@ -34,6 +34,16 @@ function Gen_Compose.step!(chain::PFChain{<:IncrementalQuery, <:AdaptivePF},
     # update the state of the particles
     Gen.particle_filter_step!(state, args, argdiffs,
                               constraints)
+    clear_delta_s!(attention)
+    for particle = state.traces
+        ws = loci_weights(particle)
+        # display(reshape(ws, (11,28)))
+        # error()
+        for i = eachindex(ws)
+            write_delta_s!(attention, i, ws[i])
+        end
+    end
+    println("adaptive computation")
     adaptive_compute!(chain, attention)
     return nothing
 end
@@ -119,8 +129,14 @@ function render_world_state(pm::IncPerceptionModule)
     mean(map(f, traces))
 end
 
-function viz_perception_module(pm::IncPerceptionModule)
-    img = render_world_state(pm)
+function viz_perception_module(agent::GenAgent{W,V,P,M,A},
+                               path::String="") where {V<:IncPerceptionModule,
+                                                       W, P, M, A}
+    img = render_world_state(agent.perception)
+    viz_attention!(img, agent.attention)
+    if path != ""
+        save(path, repeat(render_obs(img), inner = (10,10)))
+    end
     viz_obs(img)
     return nothing
 end

@@ -28,14 +28,16 @@ end
 function write_delta_pi!(att::FactorizedAttention,
                          idx::Int64, val::Float64)
     idx == 0 && return nothing
-    att.delta_pi[idx] = loghalf + logsumexp(att.delta_pi[idx], val)
+    att.delta_pi[idx] += loghalf
+    att.delta_pi[idx] = logsumexp(att.delta_pi[idx], val)
     return nothing
 end
 
 function write_delta_s!(att::FactorizedAttention,
                          idx::Int64, val::Float64)
     idx == 0 && return nothing
-    att.delta_s[idx] = loghalf + logsumexp(att.delta_s[idx], val)
+    att.delta_s[idx] += loghalf
+    att.delta_s[idx] = logsumexp(att.delta_s[idx], val)
     return nothing
 end
 
@@ -46,7 +48,8 @@ function adaptive_compute!(c::InferenceChain, att::FactorizedAttention)
     tau = 1.0
     arousal = 10
 
-    task_relevance = delta_pi #.+ delta_s
+    # task_relevance = logsumexp.(delta_pi, delta_s)
+    task_relevance = delta_pi .+ delta_s
 
     # update arousal
     # logsumsens = logsumexp(task_relevance)
@@ -55,8 +58,8 @@ function adaptive_compute!(c::InferenceChain, att::FactorizedAttention)
 
     # update importance
     importance = vec(softmax(task_relevance, tau))
-    clear_delta_pi!(att)
-    clear_delta_s!(att)
+    # clear_delta_pi!(att)
+    # clear_delta_s!(att)
 
     # REVIEW: nested tuple feels gross
     # maybe re-implement with `struct`
@@ -74,6 +77,24 @@ function apply_computation!(tr::Gen.Trace, att::AttentionModule,
                             kern_args::Tuple)
 
     tr, idx, rel_weight = kern(tr, kern_args...)
-    write_delta_s!(att, idx, rel_weight)
+    # write_delta_s!(att, idx, rel_weight)
     (tr, rel_weight)
+end
+
+function viz_attention!(img, att::FactorizedAttention)
+    _, nx, ny = size(img)
+    cis = CartesianIndices((nx, ny))
+    ws = softmax(logsumexp.(att.delta_pi, att.delta_s), 5.0)
+    # ws = softmax(att.delta_s)
+    # ws = softmax(att.delta_pi, 2.0)
+    # display(ws)
+    # error()
+    for i = cis
+        x,y = i.I # REVIEW: assumes `i` is `CartesianIndex{2}`
+        w = ws[i]
+        img[1, x, y] = min(w * 10 , 1.0)
+        # img[2, x, y] = 0.0 #min(img[1, x, y] + 10*w, 1.0)
+        # img[3, x, y] = 0.0 #min(img[1, x, y] + 10*w, 1.0)
+    end
+    return nothing
 end

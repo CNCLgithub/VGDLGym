@@ -4,6 +4,7 @@ using ImageCore
 using ImageInTerminal
 using ImageIO
 using FileIO
+using Statistics
 
 const loghalf = log(0.5)
 

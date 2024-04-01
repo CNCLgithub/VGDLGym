@@ -203,7 +203,7 @@ function loci_weights(s::VGDLWorldState, wm::VGDLWorldModel)
     @inbounds for i = 1:length(scene.static)
        # HACK: assuming `Butterfly` game
        # TODO: implement `isnavigable`
-       loc_weights[i] = Int64(scene.static[i] == VGDL.ground)
+       loc_weights[i] = Int64(scene.static[i] != VGDL.obstacle)
     end
     rmul!(loc_weights, 1.0 / sum(loc_weights))
     return loc_weights
@@ -322,20 +322,30 @@ const VGDLPerceive = Gen.get_trace_type(vgdl_wm_perceive)
 
 
 
-@gen (static) function propose_magic(tr::VGDLPerceive)
+@gen function propose_magic(tr::VGDLPerceive, ws)
+
+    t,istate,wm = get_args(tr)
+    tstate = t == 1 ? istate : get_retval(tr)[t-1]
     # sample region to change
-    ws = loci_weights(tr)
     loci::Int64 = @trace(categorical(ws), :loci)
+    # what kind of magic?
+    mws = magic_weights(tstate, wm, loci)
+    midx = @trace(categorical(mws), :magic_idx)
+    # apply magic
+    spell = @trace(vgdl_magic_switch(midx, tstate, wm, loci), :spell)
     return loci
 end
 
 @transform magic_involution (model_in, aux_in) to (model_out, aux_out) begin
     t = first(get_args(model_in))
-    addr = :kernel => t => :magic => :loci
     # forward
-    @copy(aux_in[:loci], model_out[addr])
+    @copy(aux_in[:loci], model_out[:kernel => t => :magic => :loci])
+    @copy(aux_in[:magic_idx], model_out[:kernel => t => :magic => :magic_idx])
+    @copy(aux_in[:spell], model_out[:kernel => t => :magic => :spell])
     # backward
-    @copy(model_in[addr], aux_out[:loci])
+    @copy(model_in[:kernel => t => :magic => :loci], aux_out[:loci])
+    @copy(model_in[:kernel => t => :magic => :magic_idx], aux_out[:magic_idx])
+    @copy(model_in[:kernel => t => :magic => :spell], aux_out[:spell])
 end
 
 Gen.is_involution!(magic_involution)
@@ -367,46 +377,6 @@ function select_random_agent(tr::T) where {T<:VGDLPerceive}
     Gen.select(addr)
 end
 
-magic_translator = SymmetricTraceTranslator(propose_magic,
-                                            (),
-                                            magic_involution)
-
-function perception_mcmc_kernel(tr::T,
-                                magic_steps::Int64,
-                                agent_steps::Int64) where {T<:VGDLPerceive}
-    new_tr::T = tr
-    w::Float64 = 0.0
-
-    t = first(get_args(tr))
-    # Magic block
-    s = select(
-        :kernel => t => :magic => :magic_idx,
-        :kernel => t => :magic => :spell,
-    )
-    for _ = 1:magic_steps
-        _tr, d = magic_translator(new_tr, check=false)
-        _tr, _d = move_reweight(_tr, s)
-        d += _d
-        if rand() < d
-            new_tr = _tr
-            w += d
-        end
-    end
-
-    # Agent block
-    for _ = 1:agent_steps
-        s = select_random_agent(new_tr)
-        _tr, d = move_reweight(new_tr, s)
-        if rand() < d
-            new_tr = _tr
-            w += d
-        end
-    end
-
-    return (new_tr, w)
-end
-
-
 function agent_kernel(tr::T,
                       importance::Vector{Float64},
                       ) where {T<:VGDLPerceive}
@@ -417,24 +387,24 @@ function agent_kernel(tr::T,
                                                 magic_involution)
 
     t = first(get_args(tr))
-    # Magic block
-    s = select(
-        :kernel => t => :magic => :magic_idx,
-        :kernel => t => :magic => :spell,
-    )
-    _tr, w1 = magic_translator(tr, check=false)
-    _tr, w2 = move_reweight(_tr, s)
-    if rand() < (w1 + w2)
-        idx = get_value(get_choices(_tr), :kernel => t => :magic => :magic_idx)
-        @show idx
-        return (_tr, idx, w1 + w2)
+
+    if t > 0
+        # Magic block
+        new_tr, w = magic_translator(tr, check=false)
+        if rand() < w
+            choices = get_choices(new_tr)
+            spell = get_value(choices, :kernel => t => :magic => :magic_idx)
+            idx = get_value(choices, :kernel => t => :magic => :loci)
+            @show spell
+            return (new_tr, idx, w)
+        end
     end
 
     wm = get_args(tr)[3]
     s = world_state(tr)
     # sample an index
     idx = categorical(importance)
-    agent_idxs = get_from_loci(wm, s, idx, 2)
+    agent_idxs = get_from_loci(wm, s, idx, 3)
     # don't update player
     agent_idxs = filter(x -> x != 1, agent_idxs)
     if isempty(agent_idxs)
@@ -560,7 +530,9 @@ function loci_weights(tr::T) where {T<:VGDLPerceive}
             pixel_ls += Gen.logpdf(normal, img[c,x,y],
                                    pred_mu[c,x,y], pred_sd[c,x,y])
         end
-        ws[x,y] = pixel_ls
+        # negative log-score
+        # prioritize low score regions
+        ws[x,y] = -pixel_ls
     end
-    return softmax(vec(ws))
+    return ws
 end

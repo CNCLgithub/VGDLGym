@@ -125,15 +125,22 @@ VGDL.transform(r::OrphanBirth{T}) where {T} = x -> T(;r.args...)
     return r
 end
 
-# REVIEW: avoid retiling to same type?
-function retile_weights(s::VGDLWorldState, wm::VGDLWorldModel)
+function retile_weights(loci::Int64, s::VGDLWorldState, wm::VGDLWorldModel)
+    tt = typeof(game_state(s).scene.static[loci])
     n = length(wm.tile_types)
-    Fill(1.0 / n, n)
+    ws = Vector{Float64}(undef, n)
+
+    # avoid retiling to same type
+    @inbounds for i = 1:n
+        ws[i] = Float64(!(tt <: wm.tile_types[i]))
+    end
+    rmul!(ws, sum(ws))
+    return ws
 end
 
 @gen function vgdl_retile(s::VGDLWorldState, wm::VGDLWorldModel,
                                    loci::Int64)
-    ws = retile_weights(s, wm)
+    ws = retile_weights(loci, s, wm)
     tidx = @trace(categorical(ws), :tile_type)
     T = wm.tile_types[tidx]
     ci = loci_to_coord(wm, s, loci)
@@ -215,30 +222,37 @@ function magic_weights(s::VGDLWorldState, wm::VGDLWorldModel, loci::Int64)
     # TODO: implement `has_agent`
     if has_agent(s, wm, loci)
         # none | death
-        ws[1] = ws[3] = 0.5
+        ws[1] = 0.99; ws[3] = 0.01
     else
         scene = game_state(s).scene
         # HACK: only works for Butterfly?
         if scene.static[loci] == VGDL.obstacle
-            # none | birth | retile
-            ws[1] = ws[2] = 0.5
+            ws[1] = 1.00
         else
             # none | birth | retile
-            ws[1] = ws[2] = ws[4] = 1.0 / 3.0
+            ws[1] = 0.90
+            ws[2] = ws[4] = 0.05
         end
     end
     return ws
 end
 
-@gen function vgdl_magic(s::VGDLWorldState, wm::VGDLWorldModel)
+@gen function vgdl_cast_magic(loci::Int64,
+                              s::VGDLWorldState,
+                              wm::VGDLWorldModel)
+    # what kind of magic?
+    mws = magic_weights(s, wm, loci)
+    midx = @trace(categorical(mws), :spell_type)
+    # apply magic
+    spell::VGDL.Rule = @trace(vgdl_magic_switch(midx, s, wm, loci), :spell_switch)
+    return spell
+end
+
+@gen (static) function vgdl_magic(s::VGDLWorldState, wm::VGDLWorldModel)
     # something magical may happen at a location
     lws = loci_weights(s, wm)
     loci = @trace(categorical(lws), :loci)
-    # what kind of magic?
-    mws = magic_weights(s, wm, loci)
-    midx = @trace(categorical(mws), :magic_idx)
-    # apply magic
-    spell = @trace(vgdl_magic_switch(midx, s, wm, loci), :spell)
+    spell = @trace(vgdl_cast_magic(loci, s, wm), :spell)
     # resolving interactions
     result::GameState = VGDL.resolve(s.gstate, spell)
     new_state::VGDLWorldState = VGDLWorldState(result)
@@ -327,12 +341,13 @@ const VGDLPerceive = Gen.get_trace_type(vgdl_wm_perceive)
     t,istate,wm = get_args(tr)
     tstate = t == 1 ? istate : get_retval(tr)[t-1]
     # sample region to change
-    loci::Int64 = @trace(categorical(ws), :loci)
+    # loci::Int64 = @trace(categorical(ws), :loci)
+    loci::Int64 = @trace(categorical(ws), :kernel => t => :magic => :loci)
     # what kind of magic?
     mws = magic_weights(tstate, wm, loci)
-    midx = @trace(categorical(mws), :magic_idx)
+    midx = @trace(categorical(mws), :kernel => t => :magic => :magic_idx)
     # apply magic
-    spell = @trace(vgdl_magic_switch(midx, tstate, wm, loci), :spell)
+    spell = @trace(vgdl_magic_switch(midx, tstate, wm, loci), :kernel => t => :magic => :spell)
     return loci
 end
 
@@ -382,20 +397,24 @@ function agent_kernel(tr::T,
                       ) where {T<:VGDLPerceive}
 
 
-    magic_translator = SymmetricTraceTranslator(propose_magic,
-                                                (importance,),
-                                                magic_involution)
+    # select region to update
 
-    t = first(get_args(tr))
+    idx = categorical(importance)
+
+    args = t, istate, wm = get_args(tr)
 
     if t > 0
         # Magic block
-        new_tr, w = magic_translator(tr, check=false)
-        if rand() < w
-            choices = get_choices(new_tr)
-            spell = get_value(choices, :kernel => t => :magic => :magic_idx)
-            idx = get_value(choices, :kernel => t => :magic => :loci)
-            @show spell
+        argdiffs = (NoChange(), NoChange(), NoChange())
+        cm = choicemap((:kernel => t => :magic => :loci, idx))
+        new_tr, w1, retdiff, discard = Gen.update(tr, args, argdiffs, cm)
+        new_tr, w2, retdiff = Gen.regenerate(new_tr, args, argdiffs,
+                                                     select(:kernel => t => :magic => :spell))
+
+        w = w1 + w2
+
+        # println("magic regen $(w)")
+        if !isinf(w) && log(rand()) < w
             return (new_tr, idx, w)
         end
     end
@@ -403,7 +422,6 @@ function agent_kernel(tr::T,
     wm = get_args(tr)[3]
     s = world_state(tr)
     # sample an index
-    idx = categorical(importance)
     agent_idxs = get_from_loci(wm, s, idx, 3)
     # don't update player
     agent_idxs = filter(x -> x != 1, agent_idxs)
@@ -413,6 +431,7 @@ function agent_kernel(tr::T,
     agent_idx = first(agent_idxs)
     s = select_agent_safe(tr, agent_idx)
     new_tr, w = move_reweight(tr, s)
+    # println("agent regen $(w)")
     return (new_tr, idx, w)
 end
 

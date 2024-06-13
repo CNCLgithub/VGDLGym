@@ -36,10 +36,12 @@ function render_gym!(gym)
              repeat(render_obs(obs), inner = (10,10)))
         println("\tAgent State")
         println("\t\tPercept")
-        viz_perception_module(gym.agent.perception,
+        viz_perception_module(gym.agent,
                               "$(path)/percept_$(gym.state.time).png")
+        viz_attention(gym.agent.attention,
+                      "$(path)/att_$(gym.state.time).png")
         println("\t\tHorizon")
-        viz_planning_module(gym.agent.planning,
+        viz_planning_module(gym.agent,
                             "$(path)/horizon_$(gym.state.time).png")
 
         # update reference to new game state
@@ -52,9 +54,9 @@ function test()
     G = ButterflyGame
     imap = compile_interaction_set(G)
     tset = termination_set(G)
-    init_state = load_level(G, 2)
+    init_state = load_level(G, 5)
     # limit time
-    init_state.max_time = 100
+    init_state.max_time = 40
 
     @assert typeof(init_state.scene.dynamic[1]) <: Player
 

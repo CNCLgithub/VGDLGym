@@ -35,12 +35,13 @@ function Gen_Compose.step!(chain::PFChain{<:IncrementalQuery, <:AdaptivePF},
     Gen.particle_filter_step!(state, args, argdiffs,
                               constraints)
     clear_delta_s!(attention)
+    n = length(state.traces)
     for particle = state.traces
         ws = loci_weights(particle)
         # display(reshape(ws, (11,28)))
         # error()
         for i = eachindex(ws)
-            write_delta_s!(attention, i, ws[i])
+            write_delta_s!(attention, i, ws[i] - log(n))
         end
     end
     println("adaptive computation")
@@ -123,6 +124,7 @@ end
 function render_world_state(pm::IncPerceptionModule)
     _, _, wm = pm.chain.query.args
     gr = graphics(wm)
+    # display(pm.chain.state.log_weights)
     traces = Gen.sample_unweighted_traces(pm.chain.state,
                                           length(pm.chain.state.traces))
     f = tr::Gen.Trace -> render(gr, last(get_retval(tr)).gstate)
@@ -133,7 +135,6 @@ function viz_perception_module(agent::GenAgent{W,V,P,M,A},
                                path::String="") where {V<:IncPerceptionModule,
                                                        W, P, M, A}
     img = render_world_state(agent.perception)
-    viz_attention!(img, agent.attention)
     if path != ""
         save(path, repeat(render_obs(img), inner = (10,10)))
     end

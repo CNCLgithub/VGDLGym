@@ -1,4 +1,5 @@
-export FactorizedAttention
+export FactorizedAttention,
+    viz_attention
 
 mutable struct FactorizedAttention <: AttentionModule
     delta_pi::Matrix{Float64}
@@ -45,11 +46,12 @@ function adaptive_compute!(c::InferenceChain, att::FactorizedAttention)
     @unpack proc, query, state = c
     @unpack delta_pi, delta_s = att
     # TODO: add to parameter spec
-    tau = 1.0
-    arousal = 10
+    tau = 0.001
+    arousal = 20
 
     # task_relevance = logsumexp.(delta_pi, delta_s)
     task_relevance = delta_pi .+ delta_s
+    # task_relevance = delta_s
 
     # update arousal
     # logsumsens = logsumexp(task_relevance)
@@ -81,20 +83,22 @@ function apply_computation!(tr::Gen.Trace, att::AttentionModule,
     (tr, rel_weight)
 end
 
-function viz_attention!(img, att::FactorizedAttention)
-    _, nx, ny = size(img)
+function viz_attention(att::FactorizedAttention,
+                       path::String="")
+    @unpack delta_pi, delta_s = att
+    ws = softmax(delta_pi .+ delta_s, 5.0)
+    nx, ny = size(delta_s)
     cis = CartesianIndices((nx, ny))
-    ws = softmax(logsumexp.(att.delta_pi, att.delta_s), 5.0)
-    # ws = softmax(att.delta_s)
-    # ws = softmax(att.delta_pi, 2.0)
-    # display(ws)
-    # error()
+    img = zeros((3, nx, ny))
     for i = cis
         x,y = i.I # REVIEW: assumes `i` is `CartesianIndex{2}`
         w = ws[i]
-        img[1, x, y] = min(w * 10 , 1.0)
-        # img[2, x, y] = 0.0 #min(img[1, x, y] + 10*w, 1.0)
-        # img[3, x, y] = 0.0 #min(img[1, x, y] + 10*w, 1.0)
+        img[1, x, y] = min(w * 5 , 1.0)
     end
+
+    if path != ""
+        save(path, repeat(render_obs(img), inner = (10,10)))
+    end
+    viz_obs(img)
     return nothing
 end
